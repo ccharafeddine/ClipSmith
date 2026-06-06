@@ -91,8 +91,53 @@ button {
   outline: none;
 }
 
-#greet-input {
-  margin-right: 5px;
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(520px, 80vw);
+  margin: 24px auto 0;
+  padding: 40px 24px;
+  border: 1.5px dashed #c8c8cc;
+  border-radius: 12px;
+  background-color: #ffffff;
+  box-shadow: none;
+}
+
+.dropzone:hover:not(:disabled) {
+  border-color: #396cd8;
+}
+
+.dropzone-title {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.dropzone-hint {
+  font-size: 0.8em;
+  color: #6e6e73;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meta {
+  margin: 20px auto 0;
+}
+
+.meta-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.meta-line {
+  color: #6e6e73;
+}
+
+.error {
+  margin: 16px auto 0;
+  color: #d70015;
+  max-width: min(520px, 80vw);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -112,5 +157,19 @@ button {
   }
   button:active {
     background-color: #0f0f0f69;
+  }
+
+  .dropzone {
+    background-color: #1a1a1a;
+    border-color: #3a3a3c;
+  }
+
+  .dropzone-hint,
+  .meta-line {
+    color: #98989d;
+  }
+
+  .error {
+    color: #ff453a;
   }
 }
