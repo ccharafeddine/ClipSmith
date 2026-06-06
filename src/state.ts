@@ -20,6 +20,63 @@ export const [keyframes, setKeyframes] = createSignal<number[]>([]);
 export const [loading, setLoading] = createSignal(false);
 export const [loadError, setLoadError] = createSignal("");
 
+// Playback state, shared between VideoPlayer (which drives it) and Timeline
+// (which visualizes and scrubs it).
+export const [currentTime, setCurrentTime] = createSignal(0);
+export const [duration, setDuration] = createSignal(0);
+export const [playing, setPlaying] = createSignal(false);
+
+// Trim range. inPoint is always a keyframe (snapped); outPoint is free.
+export const [inPoint, setInPoint] = createSignal(0);
+export const [outPoint, setOutPoint] = createSignal(0);
+
+/** Shortest selectable clip, in seconds, keeping IN strictly before OUT. */
+export const MIN_CLIP = 0.05;
+
+// The active <video> element, registered by VideoPlayer so other components
+// and helpers can drive playback without prop-drilling a ref.
+let videoEl: HTMLVideoElement | null = null;
+
+export function registerVideo(el: HTMLVideoElement | null): void {
+  videoEl = el;
+}
+
+/** Seek the video (and the playhead signal) to `t`, clamped to [0, duration]. */
+export function seekTo(t: number): void {
+  const max = duration() || t;
+  const clamped = Math.min(Math.max(t, 0), max);
+  if (videoEl) videoEl.currentTime = clamped;
+  setCurrentTime(clamped);
+}
+
+/** Toggle play/pause on the registered video element. */
+export function togglePlay(): void {
+  if (!videoEl) return;
+  if (videoEl.paused) {
+    // Resume inside the trim range, not wherever a previous loop left off.
+    if (currentTime() >= outPoint() || currentTime() < inPoint()) {
+      seekTo(inPoint());
+    }
+    void videoEl.play();
+  } else {
+    videoEl.pause();
+  }
+}
+
+/**
+ * Snap a requested IN time to the nearest keyframe at or before it. The IN
+ * handle is magnetic: with `-c copy` the cut must start on a keyframe.
+ * Falls back to 0.0 when nothing qualifies. `kfs` must be sorted ascending.
+ */
+export function snapIn(time: number, kfs: number[]): number {
+  let snapped = 0;
+  for (const kf of kfs) {
+    if (kf <= time) snapped = kf;
+    else break;
+  }
+  return snapped;
+}
+
 /** The file name (no directory) of the currently loaded video, or "". */
 export function fileName(): string {
   const path = filePath();
@@ -58,6 +115,14 @@ export async function loadVideo(path: string): Promise<void> {
     const probed = await probeVideo(path);
     setFilePath(path);
     setMeta(probed);
+
+    // Initialize transport + trim range to the whole clip. VideoPlayer refines
+    // duration from the element on loadedmetadata.
+    setDuration(probed.duration_secs);
+    setCurrentTime(0);
+    setPlaying(false);
+    setInPoint(0);
+    setOutPoint(probed.duration_secs);
 
     // Keyframes are needed for IN snapping but not for playback, so a failure
     // here degrades gracefully to [0.0] rather than failing the whole load.

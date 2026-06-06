@@ -167,12 +167,74 @@ button {
   box-shadow: none;
 }
 
-.player-seek {
+.tl {
+  position: relative;
   flex: 1 1 auto;
-  margin: 0;
-  padding: 0;
-  accent-color: #007aff;
+  height: 28px;
+  display: flex;
+  align-items: center;
   cursor: pointer;
+  /* Keep pointer drags from being hijacked by touch scrolling. */
+  touch-action: none;
+}
+
+.tl-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  border-radius: 3px;
+  background-color: #e2e2e6;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  background-color: #b0b0b6;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tl-range {
+  position: absolute;
+  height: 6px;
+  border-radius: 3px;
+  background-color: #007aff;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tl-playhead {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  background-color: #1d1d1f;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tl-handle {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  border-radius: 3px;
+  background-color: #ffffff;
+  border: 1.5px solid #007aff;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.tl-handle:hover {
+  background-color: #f0f6ff;
 }
 
 .player-time {
@@ -214,5 +276,25 @@ button {
 
   .error {
     color: #ff453a;
+  }
+
+  .tl-track {
+    background-color: #3a3a3c;
+  }
+
+  .tl-tick {
+    background-color: #6e6e73;
+  }
+
+  .tl-playhead {
+    background-color: #f6f6f6;
+  }
+
+  .tl-handle {
+    background-color: #1a1a1a;
+  }
+
+  .tl-handle:hover {
+    background-color: #243044;
   }
 }

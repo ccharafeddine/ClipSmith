@@ -1,54 +1,60 @@
-import { createMemo, createSignal, Show } from "solid-js";
+import { createMemo, Show } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { filePath, meta } from "../state";
+import {
+  currentTime,
+  duration,
+  filePath,
+  inPoint,
+  outPoint,
+  playing,
+  registerVideo,
+  seekTo,
+  setCurrentTime,
+  setDuration,
+  setOutPoint,
+  setPlaying,
+  togglePlay,
+} from "../state";
 import { formatDuration } from "../format";
+import Timeline from "./Timeline";
 
 // Renders the loaded video with custom transport controls. Audio is kept
 // intact — the element is never muted, since the player doubles as the
-// preview for the lossless cut. Trim handles arrive in Step 7.
+// preview for the lossless cut. Playback loops between the IN and OUT handles.
 export default function VideoPlayer() {
-  let videoEl: HTMLVideoElement | undefined;
-
-  const [playing, setPlaying] = createSignal(false);
-  const [currentTime, setCurrentTime] = createSignal(0);
-  // Seed duration from probe metadata; refine once the element reports its own.
-  const [duration, setDuration] = createSignal(meta()?.duration_secs ?? 0);
-
   const src = createMemo(() => {
     const path = filePath();
     return path ? convertFileSrc(path) : "";
   });
 
-  function togglePlay() {
-    if (!videoEl) return;
-    if (videoEl.paused) {
-      void videoEl.play();
-    } else {
-      videoEl.pause();
+  function onLoadedMetadata(e: Event & { currentTarget: HTMLVideoElement }) {
+    const d = e.currentTarget.duration;
+    if (Number.isFinite(d)) {
+      setDuration(d);
+      // Clamp the seeded OUT to the element's true duration.
+      if (outPoint() <= 0 || outPoint() > d) setOutPoint(d);
     }
-  }
-
-  function onLoadedMetadata() {
-    if (!videoEl) return;
-    // A new source resets transport state.
-    setDuration(Number.isFinite(videoEl.duration) ? videoEl.duration : 0);
     setCurrentTime(0);
     setPlaying(false);
   }
 
-  function onSeek(value: number) {
-    if (videoEl) videoEl.currentTime = value;
-    setCurrentTime(value);
+  function onTimeUpdate(e: Event & { currentTarget: HTMLVideoElement }) {
+    const t = e.currentTarget.currentTime;
+    setCurrentTime(t);
+    // Loop within the trim range while playing.
+    if (playing() && outPoint() > inPoint() && t >= outPoint()) {
+      seekTo(inPoint());
+    }
   }
 
   return (
     <section class="player">
       <video
-        ref={videoEl}
+        ref={(el) => registerVideo(el)}
         class="player-video"
         src={src()}
         onLoadedMetadata={onLoadedMetadata}
-        onTimeUpdate={() => setCurrentTime(videoEl?.currentTime ?? 0)}
+        onTimeUpdate={onTimeUpdate}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
@@ -65,15 +71,7 @@ export default function VideoPlayer() {
           </Show>
         </button>
 
-        <input
-          class="player-seek"
-          type="range"
-          min={0}
-          max={duration() || 0}
-          step="any"
-          value={currentTime()}
-          onInput={(e) => onSeek(e.currentTarget.valueAsNumber)}
-        />
+        <Timeline />
 
         <span class="player-time">
           {formatDuration(currentTime())} / {formatDuration(duration())}
