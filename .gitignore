@@ -1,0 +1,7 @@
+node_modules
+dist
+
+# FFmpeg LGPL sidecars — fetched by scripts/fetch-ffmpeg.sh, never committed.
+# CI must run the fetch script before building.
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
