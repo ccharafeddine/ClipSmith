@@ -140,6 +140,48 @@ button {
   max-width: min(520px, 80vw);
 }
 
+.player {
+  width: min(720px, 92vw);
+  margin: 16px auto 0;
+}
+
+.player-video {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 10px;
+  background-color: #000000;
+  display: block;
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.player-play {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 0.4em 0.7em;
+  box-shadow: none;
+}
+
+.player-seek {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  accent-color: #007aff;
+  cursor: pointer;
+}
+
+.player-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+  color: #6e6e73;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -165,7 +207,8 @@ button {
   }
 
   .dropzone-hint,
-  .meta-line {
+  .meta-line,
+  .player-time {
     color: #98989d;
   }
 

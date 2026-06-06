@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import DropZone from "./components/DropZone";
-import { fileName, loadError, meta } from "./state";
+import VideoPlayer from "./components/VideoPlayer";
+import { fileName, filePath, loadError, meta } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
 
@@ -25,6 +26,10 @@ function App() {
             </p>
           </section>
         )}
+      </Show>
+
+      <Show when={filePath()}>
+        <VideoPlayer />
       </Show>
     </main>
   );
