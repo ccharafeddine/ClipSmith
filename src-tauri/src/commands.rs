@@ -5,25 +5,16 @@ use std::path::Path;
 
 use tauri_plugin_shell::ShellExt;
 
+use crate::keyframes;
 use crate::probe::{self, VideoMeta};
 
-/// Probe a video file with the bundled `ffprobe` sidecar and return its
-/// [`VideoMeta`]. The source is read in place and never modified.
-#[tauri::command]
-pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMeta, String> {
+/// Run the bundled `ffprobe` sidecar with `args` and return its stdout.
+async fn run_ffprobe(app: &tauri::AppHandle, args: &[&str]) -> Result<String, String> {
     let output = app
         .shell()
         .sidecar("ffprobe")
         .map_err(|e| format!("failed to locate ffprobe sidecar: {e}"))?
-        .args([
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
-            "-show_streams",
-            "-show_format",
-            &path,
-        ])
+        .args(args.iter().copied())
         .output()
         .await
         .map_err(|e| format!("failed to run ffprobe: {e}"))?;
@@ -33,8 +24,27 @@ pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMet
         return Err(format!("ffprobe exited with an error: {}", stderr.trim()));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|e| format!("ffprobe output was not valid UTF-8: {e}"))?;
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("ffprobe output was not valid UTF-8: {e}"))
+}
+
+/// Probe a video file with the bundled `ffprobe` sidecar and return its
+/// [`VideoMeta`]. The source is read in place and never modified.
+#[tauri::command]
+pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMeta, String> {
+    let json = run_ffprobe(
+        &app,
+        &[
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
+            &path,
+        ],
+    )
+    .await?;
 
     let ext = Path::new(&path)
         .extension()
@@ -42,5 +52,28 @@ pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMet
         .unwrap_or_default()
         .to_lowercase();
 
-    probe::parse_meta(&stdout, &ext).map_err(|e| e.to_string())
+    probe::parse_meta(&json, &ext).map_err(|e| e.to_string())
+}
+
+/// List the video stream's keyframe timestamps (seconds), sorted ascending,
+/// with `0.0` always present. Drives the magnetic IN handle.
+#[tauri::command]
+pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f64>, String> {
+    let json = run_ffprobe(
+        &app,
+        &[
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "json",
+            &path,
+        ],
+    )
+    .await?;
+
+    keyframes::parse_keyframes(&json).map_err(|e| e.to_string())
 }

@@ -2,7 +2,7 @@
 // conventions prefer over a store until state grows past ~10 signals.
 
 import { createSignal } from "solid-js";
-import { probeVideo, type VideoMeta } from "./ipc";
+import { listKeyframes, probeVideo, type VideoMeta } from "./ipc";
 
 /** Video container extensions ClipSmith will open. */
 export const ALLOWED_EXTENSIONS = [
@@ -16,6 +16,7 @@ export const ALLOWED_EXTENSIONS = [
 
 export const [filePath, setFilePath] = createSignal<string | null>(null);
 export const [meta, setMeta] = createSignal<VideoMeta | null>(null);
+export const [keyframes, setKeyframes] = createSignal<number[]>([]);
 export const [loading, setLoading] = createSignal(false);
 export const [loadError, setLoadError] = createSignal("");
 
@@ -57,9 +58,20 @@ export async function loadVideo(path: string): Promise<void> {
     const probed = await probeVideo(path);
     setFilePath(path);
     setMeta(probed);
+
+    // Keyframes are needed for IN snapping but not for playback, so a failure
+    // here degrades gracefully to [0.0] rather than failing the whole load.
+    try {
+      const kfs = await listKeyframes(path);
+      setKeyframes(kfs.length > 0 ? kfs : [0]);
+    } catch (e) {
+      console.error("list_keyframes failed", e);
+      setKeyframes([0]);
+    }
   } catch (e) {
     setFilePath(null);
     setMeta(null);
+    setKeyframes([]);
     setLoadError(String(e));
   } finally {
     setLoading(false);

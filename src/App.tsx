@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
-import { fileName, filePath, loadError, meta } from "./state";
+import { fileName, filePath, keyframes, loadError, meta } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
 
@@ -22,7 +22,7 @@ function App() {
             <p class="meta-name">{fileName()}</p>
             <p class="meta-line">
               {formatDuration(m().duration_secs)} · {m().width}×{m().height} ·{" "}
-              {m().codec} · {m().container}
+              {m().codec} · {m().container} · {keyframes().length} keyframes
             </p>
           </section>
         )}

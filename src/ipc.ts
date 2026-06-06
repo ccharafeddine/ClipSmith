@@ -18,3 +18,11 @@ export interface VideoMeta {
 export function probeVideo(path: string): Promise<VideoMeta> {
   return invoke<VideoMeta>("probe_video", { path });
 }
+
+/**
+ * List the video's keyframe timestamps (seconds), sorted ascending with 0.0
+ * always present. Used to snap the magnetic IN handle.
+ */
+export function listKeyframes(path: string): Promise<number[]> {
+  return invoke<number[]>("list_keyframes", { path });
+}
