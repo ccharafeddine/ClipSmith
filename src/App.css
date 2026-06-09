@@ -244,6 +244,44 @@ button {
   color: #6e6e73;
 }
 
+.export {
+  width: min(720px, 92vw);
+  margin: 16px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.export-meta {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-align: left;
+}
+
+.export-duration {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-format {
+  font-size: 0.85em;
+  color: #6e6e73;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.export-button {
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+
+.export-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -270,7 +308,8 @@ button {
 
   .dropzone-hint,
   .meta-line,
-  .player-time {
+  .player-time,
+  .export-format {
     color: #98989d;
   }
 

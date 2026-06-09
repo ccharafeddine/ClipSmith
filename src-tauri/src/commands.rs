@@ -5,6 +5,7 @@ use std::path::Path;
 
 use tauri_plugin_shell::ShellExt;
 
+use crate::cutter;
 use crate::keyframes;
 use crate::probe::{self, VideoMeta};
 
@@ -76,4 +77,21 @@ pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f
     .await?;
 
     keyframes::parse_keyframes(&json).map_err(|e| e.to_string())
+}
+
+/// Export the selected range as a lossless clip via `ffmpeg -c copy`.
+///
+/// `start` is the keyframe-snapped IN time and `duration` is `out - start`.
+/// `output`'s extension must equal `input`'s so the stream copy always muxes
+/// back into a compatible container. The source is read in place and never
+/// modified; the only file written is `output`.
+#[tauri::command]
+pub async fn export_clip(
+    app: tauri::AppHandle,
+    input: String,
+    output: String,
+    start: f64,
+    duration: f64,
+) -> Result<(), String> {
+    cutter::cut(&app, &input, &output, start, duration).await
 }

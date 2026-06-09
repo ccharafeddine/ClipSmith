@@ -1,4 +1,5 @@
 mod commands;
+mod cutter;
 mod keyframes;
 mod probe;
 
@@ -10,7 +11,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::probe_video,
-            commands::list_keyframes
+            commands::list_keyframes,
+            commands::export_clip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

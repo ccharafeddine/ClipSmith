@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
+import ExportPanel from "./components/ExportPanel";
 import { fileName, filePath, keyframes, loadError, meta } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
@@ -30,6 +31,7 @@ function App() {
 
       <Show when={filePath()}>
         <VideoPlayer />
+        <ExportPanel />
       </Show>
     </main>
   );

@@ -2,7 +2,13 @@
 // conventions prefer over a store until state grows past ~10 signals.
 
 import { createSignal } from "solid-js";
-import { listKeyframes, probeVideo, type VideoMeta } from "./ipc";
+import { save } from "@tauri-apps/plugin-dialog";
+import {
+  exportClip as exportClipIpc,
+  listKeyframes,
+  probeVideo,
+  type VideoMeta,
+} from "./ipc";
 
 /** Video container extensions ClipSmith will open. */
 export const ALLOWED_EXTENSIONS = [
@@ -29,6 +35,11 @@ export const [playing, setPlaying] = createSignal(false);
 // Trim range. inPoint is always a keyframe (snapped); outPoint is free.
 export const [inPoint, setInPoint] = createSignal(0);
 export const [outPoint, setOutPoint] = createSignal(0);
+
+// Export state, driven by the ExportPanel.
+export const [exporting, setExporting] = createSignal(false);
+export const [exportError, setExportError] = createSignal("");
+export const [exportedPath, setExportedPath] = createSignal<string | null>(null);
 
 /** Shortest selectable clip, in seconds, keeping IN strictly before OUT. */
 export const MIN_CLIP = 0.05;
@@ -140,5 +151,44 @@ export async function loadVideo(path: string): Promise<void> {
     setLoadError(String(e));
   } finally {
     setLoading(false);
+  }
+}
+
+/**
+ * Export the current trim range as a lossless clip. Opens a save dialog
+ * defaulting to `{source_stem}_clip.{ext}` in the source container, then runs
+ * the stream-copy cut. No-op if no file is loaded, an export is already in
+ * flight, or the user cancels the dialog. The output extension matches the
+ * source so `-c copy` always succeeds.
+ */
+export async function exportClip(): Promise<void> {
+  const input = filePath();
+  if (!input || exporting()) return;
+
+  const start = inPoint();
+  const clipDuration = outPoint() - start;
+  if (clipDuration <= 0) return;
+
+  const ext = extensionOf(input);
+  const name = fileName();
+  const dot = name.lastIndexOf(".");
+  const stem = dot === -1 ? name : name.slice(0, dot);
+  const defaultName = ext ? `${stem}_clip.${ext}` : `${stem}_clip`;
+
+  const output = await save({
+    defaultPath: defaultName,
+    filters: ext ? [{ name: "Video", extensions: [ext] }] : undefined,
+  });
+  if (typeof output !== "string") return;
+
+  setExportError("");
+  setExporting(true);
+  try {
+    await exportClipIpc(input, output, start, clipDuration);
+    setExportedPath(output);
+  } catch (e) {
+    setExportError(String(e));
+  } finally {
+    setExporting(false);
   }
 }
