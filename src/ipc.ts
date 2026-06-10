@@ -42,6 +42,15 @@ export function exportClip(
 }
 
 /**
+ * Resolve the default save path (`<Exports>/<filename>`), creating the Exports
+ * folder on demand. Dev builds use the project's `Exports/`; release builds use
+ * `<Documents>/ClipSmith/Exports`. Used to default the save dialog.
+ */
+export function defaultSavePath(filename: string): Promise<string> {
+  return invoke<string>("default_save_path", { filename });
+}
+
+/**
  * Build the timeline preview strip for a video and resolve to a PNG data URI
  * (no file is written to disk). `durationSecs` comes from the probe; `count` is
  * the number of square thumbnails to tile across the timeline.

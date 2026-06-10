@@ -14,6 +14,7 @@ pub fn run() {
             commands::probe_video,
             commands::list_keyframes,
             commands::export_clip,
+            commands::default_save_path,
             commands::generate_filmstrip
         ])
         .run(tauri::generate_context!())

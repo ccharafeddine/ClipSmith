@@ -5,6 +5,7 @@ import { createSignal } from "solid-js";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   exportClip as exportClipIpc,
+  defaultSavePath,
   listKeyframes,
   probeVideo,
   type VideoMeta,
@@ -242,8 +243,18 @@ export async function exportClip(): Promise<void> {
   const stem = dot === -1 ? name : name.slice(0, dot);
   const defaultName = ext ? `${stem}_clip.${ext}` : `${stem}_clip`;
 
+  // Default the dialog into the Exports folder (Rust creates it on demand).
+  // If that can't be resolved, fall back to a bare filename so the dialog still
+  // opens and the user can navigate anywhere.
+  let defaultPath = defaultName;
+  try {
+    defaultPath = await defaultSavePath(defaultName);
+  } catch {
+    defaultPath = defaultName;
+  }
+
   const output = await save({
-    defaultPath: defaultName,
+    defaultPath,
     filters: ext ? [{ name: "Video", extensions: [ext] }] : undefined,
   });
   if (typeof output !== "string") return;
