@@ -104,6 +104,7 @@ pub async fn generate_filmstrip(
     app: tauri::AppHandle,
     path: String,
     duration_secs: f64,
+    count: u32,
 ) -> Result<String, String> {
-    filmstrip::generate(&app, &path, duration_secs).await
+    filmstrip::generate(&app, &path, duration_secs, count).await
 }

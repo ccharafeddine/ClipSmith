@@ -11,17 +11,17 @@ use base64::Engine as _;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-/// Number of thumbnails sampled across the clip.
-const COUNT: u32 = 24;
-/// Thumbnail height in pixels (width follows the center-crop aspect).
-const HEIGHT: u32 = 144;
+/// Square thumbnail edge in pixels (each thumbnail is a center square crop).
+const SIZE: u32 = 144;
 
 /// Build a horizontal thumbnail strip spanning the whole clip and return it as a
 /// `data:image/png;base64,...` URI.
 ///
-/// `duration_secs` is the source duration; thumbnails are sampled at evenly
-/// spaced timestamps. The source is read in place and never modified, and no
-/// file is written to disk.
+/// `count` thumbnails are sampled at evenly spaced timestamps and tiled left to
+/// right. The caller picks `count` from the timeline's rendered width so the
+/// square thumbnails tile it without distortion (one per track-height of width);
+/// it's clamped to a sane range here. The source is read in place and never
+/// modified, and no file is written to disk.
 ///
 /// # Errors
 /// Returns a user-facing message if ffmpeg can't be located, fails to run, or
@@ -30,14 +30,16 @@ pub async fn generate(
     app: &tauri::AppHandle,
     path: &str,
     duration_secs: f64,
+    count: u32,
 ) -> Result<String, String> {
+    let count = count.clamp(4, 20);
     let dur = if duration_secs > 0.05 { duration_secs } else { 1.0 };
 
-    // One fast keyframe seek per thumbnail (open the input COUNT times at evenly
+    // One fast keyframe seek per thumbnail (open the input `count` times at evenly
     // spaced timestamps); `-an` skips audio.
     let mut args: Vec<String> = vec!["-v".into(), "error".into()];
-    for i in 0..COUNT {
-        let t = (f64::from(i) + 0.5) * dur / f64::from(COUNT);
+    for i in 0..count {
+        let t = (f64::from(i) + 0.5) * dur / f64::from(count);
         args.push("-ss".into());
         args.push(format!("{t:.3}"));
         args.push("-an".into());
@@ -45,18 +47,19 @@ pub async fn generate(
         args.push(path.to_owned());
     }
 
-    // Center-crop each frame to a tall-ish slice, scale to a common height, then
-    // hstack them all into one strip.
+    // Center-crop each frame to a square, scale to a common size, then hstack
+    // them all into one strip. Square thumbnails tile the timeline cleanly and
+    // stay recognizable instead of squishing into thin slivers on long clips.
     let mut fc = String::new();
-    for i in 0..COUNT {
+    for i in 0..count {
         fc.push_str(&format!(
-            "[{i}:v]crop=min(iw\\,ih*0.7):ih,scale=-2:{HEIGHT},setsar=1[v{i}];"
+            "[{i}:v]crop=min(iw\\,ih):min(iw\\,ih),scale={SIZE}:{SIZE},setsar=1[v{i}];"
         ));
     }
-    for i in 0..COUNT {
+    for i in 0..count {
         fc.push_str(&format!("[v{i}]"));
     }
-    fc.push_str(&format!("hstack=inputs={COUNT}[out]"));
+    fc.push_str(&format!("hstack=inputs={count}[out]"));
 
     args.extend([
         "-filter_complex".into(),

@@ -1,13 +1,15 @@
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, For, on, Show } from "solid-js";
 import {
   currentTime,
   duration,
+  filePath,
   filmstripSrc,
   inPoint,
   keyframes,
   MIN_CLIP,
   outPoint,
   seekTo,
+  setFilmstripSrc,
   setInPoint,
   setOutPoint,
   setViewEnd,
@@ -16,7 +18,16 @@ import {
   viewEnd,
   viewStart,
 } from "../state";
+import { generateFilmstrip } from "../ipc";
 import { formatDuration } from "../format";
+
+// Display height of the strip, in px; one square thumbnail per this much track
+// width tiles the timeline without distortion. Matches `.timeline` height.
+const THUMB_PX = 72;
+// Cap the thumbnail count: long videos still get a readable handful, not a row
+// of unreadable slivers.
+const MAX_THUMBS = 20;
+const MIN_THUMBS = 6;
 
 // Most-zoomed-in state: the window can shrink to this many seconds. Kept small
 // so the free OUT handle (and the magnetic IN handle near sparse keyframes) can
@@ -39,6 +50,28 @@ export default function Timeline() {
   let track: HTMLDivElement | undefined;
 
   const viewSpan = () => viewEnd() - viewStart();
+
+  // Build the preview strip once per loaded video, sizing the thumbnail count to
+  // the measured track width so the square thumbnails tile it without squishing.
+  // `on(filePath)` keeps this from re-firing as the duration is refined.
+  createEffect(
+    on(filePath, (path) => {
+      if (!path) return;
+      const d = duration();
+      if (d <= 0) return;
+      const w = track?.clientWidth ?? 0;
+      const count = Math.min(
+        MAX_THUMBS,
+        Math.max(MIN_THUMBS, Math.round(w / THUMB_PX) || 12),
+      );
+      void generateFilmstrip(path, d, count)
+        .then((uri) => {
+          // Ignore a late result if another video was loaded/closed meanwhile.
+          if (filePath() === path) setFilmstripSrc(uri);
+        })
+        .catch((e) => console.error("generate_filmstrip failed", e));
+    }),
+  );
 
   // Position of a time within the visible window, as a clamped 0-100 percentage.
   const pct = (t: number) => {

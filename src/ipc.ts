@@ -43,11 +43,13 @@ export function exportClip(
 
 /**
  * Build the timeline preview strip for a video and resolve to a PNG data URI
- * (no file is written to disk). `durationSecs` comes from the probe.
+ * (no file is written to disk). `durationSecs` comes from the probe; `count` is
+ * the number of square thumbnails to tile across the timeline.
  */
 export function generateFilmstrip(
   path: string,
   durationSecs: number,
+  count: number,
 ): Promise<string> {
-  return invoke<string>("generate_filmstrip", { path, durationSecs });
+  return invoke<string>("generate_filmstrip", { path, durationSecs, count });
 }
