@@ -5,6 +5,7 @@ import { createSignal } from "solid-js";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   exportClip as exportClipIpc,
+  generateFilmstrip,
   listKeyframes,
   probeVideo,
   type VideoMeta,
@@ -23,6 +24,8 @@ export const ALLOWED_EXTENSIONS = [
 export const [filePath, setFilePath] = createSignal<string | null>(null);
 export const [meta, setMeta] = createSignal<VideoMeta | null>(null);
 export const [keyframes, setKeyframes] = createSignal<number[]>([]);
+// Timeline preview strip as a PNG data URI, or "" until generated / on failure.
+export const [filmstripSrc, setFilmstripSrc] = createSignal("");
 export const [loading, setLoading] = createSignal(false);
 export const [loadError, setLoadError] = createSignal("");
 
@@ -132,6 +135,7 @@ export async function loadVideo(path: string): Promise<void> {
     const probed = await probeVideo(path);
     setFilePath(path);
     setMeta(probed);
+    setFilmstripSrc("");
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -153,10 +157,21 @@ export async function loadVideo(path: string): Promise<void> {
       console.error("list_keyframes failed", e);
       setKeyframes([0]);
     }
+
+    // The preview strip is cosmetic, so a failure (or a slow build) must not
+    // block loading: fire it off and fill it in when ready, degrading to the
+    // plain near-black strip if ffmpeg can't produce it.
+    void generateFilmstrip(path, probed.duration_secs)
+      .then((uri) => {
+        // Ignore a late result if the user already loaded/closed another video.
+        if (filePath() === path) setFilmstripSrc(uri);
+      })
+      .catch((e) => console.error("generate_filmstrip failed", e));
   } catch (e) {
     setFilePath(null);
     setMeta(null);
     setKeyframes([]);
+    setFilmstripSrc("");
     setLoadError(String(e));
   } finally {
     setLoading(false);
@@ -177,6 +192,7 @@ export function closeVideo(): void {
   setFilePath(null);
   setMeta(null);
   setKeyframes([]);
+  setFilmstripSrc("");
   setLoadError("");
   setCurrentTime(0);
   setDuration(0);

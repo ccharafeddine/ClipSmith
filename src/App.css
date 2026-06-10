@@ -344,6 +344,16 @@ button.export:hover:not(:disabled) {
 }
 
 /* Keyframe ticks: dim vertical guides marking valid IN positions. */
+/* Thumbnail strip behind the ticks/dim/selection; left/width set inline per zoom. */
+.tl-filmstrip {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
 .tl-tick {
   position: absolute;
   top: 0;

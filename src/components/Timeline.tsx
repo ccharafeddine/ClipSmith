@@ -2,6 +2,7 @@ import { createMemo, For, Show } from "solid-js";
 import {
   currentTime,
   duration,
+  filmstripSrc,
   inPoint,
   keyframes,
   MIN_CLIP,
@@ -111,6 +112,13 @@ export default function Timeline() {
     currentTime() >= viewStart() && currentTime() <= viewEnd();
   const zoomed = () => viewSpan() < duration() - 1e-6;
 
+  // The strip spans the whole clip; scale/shift it so the visible window fills
+  // the track width as the user zooms.
+  const stripWidth = () =>
+    duration() > 0 ? (duration() / viewSpan()) * 100 : 100;
+  const stripLeft = () =>
+    duration() > 0 ? -(viewStart() / viewSpan()) * 100 : 0;
+
   return (
     <div class="timeline-wrap">
       <div class="timeline">
@@ -125,6 +133,14 @@ export default function Timeline() {
             "--ph": `${pct(currentTime())}%`,
           }}
         >
+          <Show when={filmstripSrc()}>
+            <img
+              class="tl-filmstrip"
+              src={filmstripSrc()}
+              alt=""
+              style={{ left: `${stripLeft()}%`, width: `${stripWidth()}%` }}
+            />
+          </Show>
           <For each={visibleKeyframes()}>
             {(kf) => (
               <div class="tl-tick" style={{ left: `${pct(kf)}%` }} />

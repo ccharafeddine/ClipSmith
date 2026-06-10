@@ -40,3 +40,14 @@ export function exportClip(
 ): Promise<void> {
   return invoke<void>("export_clip", { input, output, start, duration });
 }
+
+/**
+ * Build the timeline preview strip for a video and resolve to a PNG data URI
+ * (no file is written to disk). `durationSecs` comes from the probe.
+ */
+export function generateFilmstrip(
+  path: string,
+  durationSecs: number,
+): Promise<string> {
+  return invoke<string>("generate_filmstrip", { path, durationSecs });
+}

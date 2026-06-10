@@ -6,6 +6,7 @@ use std::path::Path;
 use tauri_plugin_shell::ShellExt;
 
 use crate::cutter;
+use crate::filmstrip;
 use crate::keyframes;
 use crate::probe::{self, VideoMeta};
 
@@ -94,4 +95,15 @@ pub async fn export_clip(
     duration: f64,
 ) -> Result<(), String> {
     cutter::cut(&app, &input, &output, start, duration).await
+}
+
+/// Build the timeline preview strip for `path` and return it as a PNG data URI.
+/// No file is written to disk; ffmpeg pipes the montage to stdout.
+#[tauri::command]
+pub async fn generate_filmstrip(
+    app: tauri::AppHandle,
+    path: String,
+    duration_secs: f64,
+) -> Result<String, String> {
+    filmstrip::generate(&app, &path, duration_secs).await
 }

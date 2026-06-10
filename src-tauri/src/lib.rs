@@ -1,5 +1,6 @@
 mod commands;
 mod cutter;
+mod filmstrip;
 mod keyframes;
 mod probe;
 
@@ -12,7 +13,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::probe_video,
             commands::list_keyframes,
-            commands::export_clip
+            commands::export_clip,
+            commands::generate_filmstrip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
