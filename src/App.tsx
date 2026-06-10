@@ -3,7 +3,7 @@ import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
 import ExportPanel from "./components/ExportPanel";
 import Logo from "./components/Logo";
-import { fileName, loadError, meta } from "./state";
+import { closeVideo, fileName, loadError, meta } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
 
@@ -39,6 +39,15 @@ function App() {
                 {m().height} &middot; {(m().fps_num / m().fps_den).toFixed(2)} fps
                 &middot; {m().codec} &middot; {m().container}
               </span>
+              <button
+                type="button"
+                class="close-video"
+                title="Remove video"
+                aria-label="Remove video"
+                onClick={closeVideo}
+              >
+                &times;
+              </button>
             </p>
             <VideoPlayer />
             <ExportPanel />

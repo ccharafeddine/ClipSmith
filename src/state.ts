@@ -164,6 +164,32 @@ export async function loadVideo(path: string): Promise<void> {
 }
 
 /**
+ * Remove the loaded video without opening another: release the <video> handle
+ * (so the source file is no longer locked on disk) and reset all source-derived
+ * state back to the empty state. Safe to call from the close button.
+ */
+export function closeVideo(): void {
+  if (videoEl) {
+    videoEl.pause();
+    videoEl.removeAttribute("src");
+    videoEl.load();
+  }
+  setFilePath(null);
+  setMeta(null);
+  setKeyframes([]);
+  setLoadError("");
+  setCurrentTime(0);
+  setDuration(0);
+  setPlaying(false);
+  setInPoint(0);
+  setOutPoint(0);
+  setViewStart(0);
+  setViewEnd(0);
+  setExportError("");
+  setExportedPath(null);
+}
+
+/**
  * Export the current trim range as a lossless clip. Opens a save dialog
  * defaulting to `{source_stem}_clip.{ext}` in the source container, then runs
  * the stream-copy cut. No-op if no file is loaded, an export is already in
