@@ -15,7 +15,7 @@ import { formatDuration } from "../format";
 // confirm what the lossless cut will write.
 export default function ExportPanel() {
   return (
-    <section class="export">
+    <section class="export-panel">
       <div class="export-meta">
         <span class="export-label">Clip</span>
         <span class="export-duration">

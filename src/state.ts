@@ -83,6 +83,31 @@ export function togglePlay(): void {
 }
 
 /**
+ * Set the IN point at the current playhead, snapped to the nearest keyframe at
+ * or before it (IN must land on a keyframe), kept strictly before OUT.
+ */
+export function setInAtPlayhead(): void {
+  const limit = Math.max(0, outPoint() - MIN_CLIP);
+  setInPoint(snapIn(Math.min(currentTime(), limit), keyframes()));
+}
+
+/** Set the OUT point at the current playhead (free), kept strictly after IN. */
+export function setOutAtPlayhead(): void {
+  const lo = inPoint() + MIN_CLIP;
+  setOutPoint(Math.min(Math.max(currentTime(), lo), duration()));
+}
+
+/** Pause and seek by one source frame (1 / fps) in the given direction. */
+export function stepFrame(direction: 1 | -1): void {
+  const m = meta();
+  const fps = m && m.fps_den > 0 ? m.fps_num / m.fps_den : 30;
+  const frameDur = fps > 0 ? 1 / fps : 1 / 30;
+  if (videoEl) videoEl.pause();
+  setPlaying(false);
+  seekTo(currentTime() + direction * frameDur);
+}
+
+/**
  * Snap a requested IN time to the nearest keyframe at or before it. The IN
  * handle is magnetic: with `-c copy` the cut must start on a keyframe.
  * Falls back to 0.0 when nothing qualifies. `kfs` must be sorted ascending.

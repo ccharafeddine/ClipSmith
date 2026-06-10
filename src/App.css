@@ -439,13 +439,14 @@ button.export:hover:not(:disabled) {
 
 /* ---- Export panel ----------------------------------------------------- */
 
-.export {
+.export-panel {
   margin-top: var(--s2);
   width: 100%;
   max-width: max(420px, calc((100vh - 320px) * (var(--aspect))));
   margin-left: auto;
   margin-right: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s3);
 }
