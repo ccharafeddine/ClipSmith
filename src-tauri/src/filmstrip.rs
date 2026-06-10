@@ -8,6 +8,7 @@
 //! (`-ss` before `-i`), so this stays quick even on hour-long sources.
 
 use base64::Engine as _;
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// Number of thumbnails sampled across the clip.
@@ -72,20 +73,37 @@ pub async fn generate(
         "pipe:1".into(),
     ]);
 
-    let output = app
+    // NOTE: we must NOT use `.output()` here. Its convenience reader splits the
+    // child's stdout on newlines and rejoins with `\n`, which mangles any binary
+    // containing CRLF (`0x0D 0x0A`) — and a PNG is full of those. `set_raw_out`
+    // + draining the events ourselves keeps the bytes byte-for-byte intact.
+    let (mut rx, _child) = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| format!("could not locate ffmpeg: {e}"))?
         .args(args)
-        .output()
-        .await
+        .set_raw_out(true)
+        .spawn()
         .map_err(|e| format!("ffmpeg failed to start: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("could not build filmstrip: {}", stderr.trim()));
+    let mut png = Vec::new();
+    let mut stderr = Vec::new();
+    let mut code: Option<i32> = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(chunk) => png.extend(chunk),
+            CommandEvent::Stderr(chunk) => stderr.extend(chunk),
+            CommandEvent::Terminated(payload) => code = payload.code,
+            CommandEvent::Error(e) => return Err(format!("ffmpeg error: {e}")),
+            _ => {}
+        }
     }
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&output.stdout);
+    if code != Some(0) {
+        let msg = String::from_utf8_lossy(&stderr);
+        return Err(format!("could not build filmstrip: {}", msg.trim()));
+    }
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
     Ok(format!("data:image/png;base64,{b64}"))
 }
