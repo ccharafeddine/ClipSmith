@@ -10,7 +10,9 @@
 # sufficient and required — a GPL build would force the whole app to GPL.
 #
 # Windows: BtbN's static "lgpl" release — one self-contained .exe, no DLLs.
-# macOS:   no turnkey LGPL static build is currently known → skipped (Step 13).
+# macOS:   no LGPL prebuilt exists, so it's compiled from source with
+#          --disable-gpl by scripts/build-ffmpeg-macos.sh (invoked here when run
+#          on a Mac, and by CI on macOS runners).
 #
 set -euo pipefail
 
@@ -76,14 +78,20 @@ fetch_windows() {
 }
 
 fetch_macos() {
-  echo "==> macOS (${MAC_TRIPLES[*]}): SKIPPED"
-  cat >&2 <<'EOF'
-    No turnkey LGPL static macOS FFmpeg build is currently known.
-    evermeet.cx ships a GPL build (it bundles libx264), which would violate
-    ClipSmith's LGPL-only constraint. This must be resolved before the macOS
-    release (see CLAUDE.md build plan, Steps 2 and 13). Skipping for now —
-    the macOS .dmg cannot be built until LGPL sidecars are sourced.
+  # No turnkey LGPL static macOS FFmpeg build is published (evermeet.cx etc. are
+  # GPL, bundling libx264), so macOS sidecars are COMPILED FROM SOURCE with
+  # --disable-gpl. That requires the macOS toolchain, so it only runs on a Mac.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo "==> macOS: compiling LGPL FFmpeg from source"
+    bash "$SCRIPT_DIR/build-ffmpeg-macos.sh"
+  else
+    echo "==> macOS (${MAC_TRIPLES[*]}): skipped on this $(uname -s) host"
+    cat >&2 <<'EOF'
+    macOS sidecars are built LGPL from source by scripts/build-ffmpeg-macos.sh,
+    which needs the macOS toolchain. Run this script (or that one) on a Mac to
+    produce them; CI builds them on macOS runners (.github/workflows/release.yml).
 EOF
+  fi
 }
 
 main() {
