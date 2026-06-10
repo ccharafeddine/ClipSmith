@@ -2,14 +2,17 @@ import { Show } from "solid-js";
 import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
 import ExportPanel from "./components/ExportPanel";
-import { fileName, filePath, keyframes, loadError, meta } from "./state";
+import Logo from "./components/Logo";
+import { fileName, loadError, meta } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
 
 function App() {
   return (
     <main class="container">
-      <h1>ClipSmith</h1>
+      <header class="app-header">
+        <Logo />
+      </header>
 
       <DropZone />
 
@@ -17,21 +20,30 @@ function App() {
         <p class="error">{loadError()}</p>
       </Show>
 
-      <Show when={meta()}>
+      <Show
+        when={meta()}
+        fallback={
+          <div class="empty-state">Open a video to start trimming.</div>
+        }
+      >
         {(m) => (
-          <section class="meta">
-            <p class="meta-name">{fileName()}</p>
+          <div
+            class="editor-single"
+            style={{ "--aspect": `${m().width}/${m().height}` }}
+          >
             <p class="meta-line">
-              {formatDuration(m().duration_secs)} · {m().width}×{m().height} ·{" "}
-              {m().codec} · {m().container} · {keyframes().length} keyframes
+              <span class="meta-text">
+                <span class="filename">{fileName()}</span>
+                {"  "}
+                {formatDuration(m().duration_secs)} &middot; {m().width}&times;
+                {m().height} &middot; {(m().fps_num / m().fps_den).toFixed(2)} fps
+                &middot; {m().codec} &middot; {m().container}
+              </span>
             </p>
-          </section>
+            <VideoPlayer />
+            <ExportPanel />
+          </div>
         )}
-      </Show>
-
-      <Show when={filePath()}>
-        <VideoPlayer />
-        <ExportPanel />
       </Show>
     </main>
   );

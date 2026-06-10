@@ -36,6 +36,12 @@ export const [playing, setPlaying] = createSignal(false);
 export const [inPoint, setInPoint] = createSignal(0);
 export const [outPoint, setOutPoint] = createSignal(0);
 
+// Visible timeline window, in seconds, for zoom. [viewStart, viewEnd] is a
+// sub-range of [0, duration] that the Timeline scales to fill its width; the
+// whole clip is shown when the window equals the full duration.
+export const [viewStart, setViewStart] = createSignal(0);
+export const [viewEnd, setViewEnd] = createSignal(0);
+
 // Export state, driven by the ExportPanel.
 export const [exporting, setExporting] = createSignal(false);
 export const [exportError, setExportError] = createSignal("");
@@ -134,6 +140,9 @@ export async function loadVideo(path: string): Promise<void> {
     setPlaying(false);
     setInPoint(0);
     setOutPoint(probed.duration_secs);
+    // Start fully zoomed out: the window is the whole clip.
+    setViewStart(0);
+    setViewEnd(probed.duration_secs);
 
     // Keyframes are needed for IN snapping but not for playback, so a failure
     // here degrades gracefully to [0.0] rather than failing the whole load.

@@ -1,0 +1,65 @@
+/* Design tokens: the single source of truth. Imported once globally.
+   Cyberminimalism shared with the sibling app GifSmith: near-black, monochrome,
+   one violet accent (the trim handles). The only color events on screen are the
+   video frame and the trim handles. */
+
+:root {
+  color-scheme: dark;
+
+  /* Background scale: three near-black layers, dark and close together. */
+  --bg-base: #0a0a0a; /* app canvas */
+  --bg-panel: #141414; /* panels / modal */
+  --bg-control: #1e1e1e; /* raised controls */
+
+  /* Text */
+  --fg: #ededed; /* primary, near-white */
+  --fg-2: #9a9a9a; /* secondary, mid-gray */
+  --fg-3: #5e5e5e; /* tertiary, dim-gray */
+
+  /* Accent: electric violet. Primary (also the trim handles). */
+  --accent: #a974ff;
+  --accent-fg: #ffffff;
+  --trim: var(--accent); /* timeline handles read this */
+
+  /* Secondary accent: electric cyan. The "Smith" in the wordmark. */
+  --accent-2: #45f2f2;
+  --accent-2-fg: #062020;
+
+  /* One signature gradient. Export button fill + the "Clip" wordmark only. */
+  --grad: linear-gradient(135deg, #c6acff 0%, #a974ff 50%, #8a4dff 100%);
+
+  /* Borders (hairline) */
+  --border: #262626;
+
+  /* Semantic */
+  --danger: #ff5d5d;
+
+  /* Spacing: 4px base grid */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  /* Radii: small for controls, larger for panels */
+  --r-control: 6px;
+  --r-panel: 12px;
+
+  /* Timeline strip backdrop (near-black; handles stay violet) */
+  --timeline-bg: #0e0e0e;
+  /* Keyframe ticks on the timeline: dim, so they read as guides not noise. */
+  --kf-tick: #4a4a4a;
+
+  /* Type scale */
+  --fs-wordmark: 2rem;
+  --fs-body: 0.95rem;
+  --fs-label: 0.75rem;
+  --fs-num: 0.85rem;
+
+  /* Font roles: Syne everywhere. Numeric readouts use tabular figures so
+     they don't jitter as values change. */
+  --font-display: "Syne", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-body: "Syne", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Syne", -apple-system, "Segoe UI", system-ui, sans-serif;
+}

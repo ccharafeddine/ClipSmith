@@ -1,339 +1,452 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
+/* Cyberminimalism, shared with the sibling app GifSmith. All values come from
+   tokens.css (the single source of truth). The iOS trim-handle rules are
+   intentionally preserved; ClipSmith adds keyframe ticks on the strip. */
+
+* {
+  box-sizing: border-box;
 }
 
-.logo.solid:hover {
-  filter: drop-shadow(0 0 2em #2f5d90);
-}
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
+
+/* ---- Layout: full-height app, no page scroll ------------------------- */
 
 .container {
-  margin: 0;
-  padding-top: 10vh;
+  max-width: 1280px;
+  height: 100vh;
+  margin: 0 auto;
+  padding: var(--s4);
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  gap: var(--s4);
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.app-header {
   display: flex;
   justify-content: center;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-3);
 }
 
-a:hover {
-  color: #535bf2;
+/* Single column: video + timeline, then the export panel, centered. */
+.editor-single {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
 }
 
-h1 {
-  text-align: center;
+/* ---- Wordmark: Syne, two-tone, framed by the trim selection ----------- */
+
+.logo {
+  display: inline-flex;
+  user-select: none;
 }
 
-input,
+.logo-frame {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 20px;
+  border-top: 3px solid var(--trim);
+  border-bottom: 3px solid var(--trim);
+}
+
+.logo-handle {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 11px;
+  background: var(--trim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-handle::after {
+  content: "";
+  width: 2px;
+  height: 45%;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 1px;
+}
+
+.logo-handle-l {
+  left: 0;
+  border-radius: 4px 0 0 4px;
+}
+
+.logo-handle-r {
+  right: 0;
+  border-radius: 0 4px 4px 0;
+}
+
+.logo-word {
+  font-family: var(--font-display);
+  font-size: var(--fs-wordmark);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.logo-clip {
+  font-weight: 800;
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.logo-smith {
+  font-weight: 600;
+  color: var(--accent-2);
+}
+
+/* ---- Controls --------------------------------------------------------- */
+
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
   font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
+  letter-spacing: 0.01em;
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--bg-control);
+  color: var(--fg);
   cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-input,
-button {
-  outline: none;
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
+
+/* The one signature gradient: Export button fill only. */
+button.export {
+  background: var(--grad);
+  border-color: transparent;
+  color: var(--accent-fg);
+  font-weight: 700;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+button.export:hover:not(:disabled) {
+  filter: brightness(1.08);
+  color: var(--accent-fg);
+  border-color: transparent;
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--fs-num);
+  font-family: var(--font-mono);
+}
+
+/* ---- Source loader / dropzone ---------------------------------------- */
 
 .dropzone {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--s1);
   width: min(520px, 80vw);
-  margin: 24px auto 0;
-  padding: 40px 24px;
-  border: 1.5px dashed #c8c8cc;
-  border-radius: 12px;
-  background-color: #ffffff;
-  box-shadow: none;
+  margin: 0 auto;
+  padding: var(--s5) var(--s4);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-panel);
+  background: var(--bg-panel);
 }
 
 .dropzone:hover:not(:disabled) {
-  border-color: #396cd8;
+  border-color: var(--accent);
+  color: var(--fg);
 }
 
 .dropzone-title {
-  font-size: 1.05em;
+  font-size: 1.05rem;
   font-weight: 600;
+  color: var(--fg);
 }
 
 .dropzone-hint {
-  font-size: 0.8em;
-  color: #6e6e73;
+  font-size: var(--fs-label);
+  color: var(--fg-3);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
-.meta {
-  margin: 20px auto 0;
-}
+/* ---- File info -------------------------------------------------------- */
 
-.meta-name {
+.filename {
   font-weight: 600;
-  word-break: break-all;
+  color: var(--fg);
 }
 
 .meta-line {
-  color: #6e6e73;
+  margin: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-num);
+  font-variant-numeric: tabular-nums;
 }
 
-.error {
-  margin: 16px auto 0;
-  color: #d70015;
-  max-width: min(520px, 80vw);
+.meta-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* ---- Player + stage --------------------------------------------------- */
+
+/* The video + timeline + controls sit in one block sized to the video so the
+   timeline lines up under the preview. Width is bounded by available height so
+   the page never scrolls. */
 .player {
-  width: min(720px, 92vw);
-  margin: 16px auto 0;
-}
-
-.player-video {
   width: 100%;
-  max-height: 60vh;
-  border-radius: 10px;
-  background-color: #000000;
-  display: block;
-}
-
-.player-controls {
+  max-width: calc((100vh - 320px) * (var(--aspect)));
+  margin: 0 auto;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 10px;
+  flex-direction: column;
+  gap: var(--s2);
 }
 
-.player-play {
-  flex: 0 0 auto;
-  min-width: 44px;
-  padding: 0.4em 0.7em;
-  box-shadow: none;
-}
-
-.tl {
+.stage {
   position: relative;
-  flex: 1 1 auto;
-  height: 28px;
+  width: 100%;
+  aspect-ratio: var(--aspect);
+  background: #000;
+  border-radius: var(--r-panel);
+  overflow: hidden;
+}
+
+.stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.controls {
   display: flex;
   align-items: center;
-  cursor: pointer;
-  /* Keep pointer drags from being hijacked by touch scrolling. */
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+  font-size: var(--fs-num);
+  white-space: nowrap;
+}
+
+.selection-len {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+  font-size: var(--fs-num);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* ---- Timeline -------------------------------------------------------------
+   The iOS trim handles (shape, violet color, behavior) carried over from
+   GifSmith. ClipSmith renders keyframe ticks behind the dim/selection. */
+
+.timeline-wrap {
+  width: 100%;
+  margin-top: var(--s2);
+}
+
+.tl-info {
+  margin: var(--s1) 0 0;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* iOS-style trim strip. --in / --out / --ph are percentages set inline.
+   Horizontal padding gives the outward-pointing handles room at the edges. */
+.timeline {
+  position: relative;
+  height: 72px;
+  padding: 0 14px;
+  border-radius: var(--r-control);
+  background: var(--timeline-bg);
+  overflow: hidden;
   touch-action: none;
+  user-select: none;
+  cursor: pointer;
 }
 
-.tl-track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 6px;
-  border-radius: 3px;
-  background-color: #e2e2e6;
+/* Content area: 0-100% maps here; handles overflow into the padding. */
+.tl-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
+/* Keyframe ticks: dim vertical guides marking valid IN positions. */
 .tl-tick {
   position: absolute;
-  top: 50%;
+  top: 0;
+  bottom: 0;
+  /* left is set inline per keyframe (percentage within the view window). */
   width: 1px;
-  height: 12px;
-  transform: translate(-50%, -50%);
-  background-color: #b0b0b6;
+  background: var(--kf-tick);
   pointer-events: none;
-  z-index: 1;
 }
 
-.tl-range {
+.tl-dim {
   position: absolute;
-  height: 6px;
-  border-radius: 3px;
-  background-color: #007aff;
-  opacity: 0.35;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
   pointer-events: none;
-  z-index: 1;
 }
 
-.tl-playhead {
+.tl-dim-left {
+  left: 0;
+  width: var(--in);
+}
+
+.tl-dim-right {
+  left: var(--out);
+  right: 0;
+}
+
+.tl-selection {
   position: absolute;
-  top: 50%;
-  width: 2px;
-  height: 20px;
-  transform: translate(-50%, -50%);
-  background-color: #1d1d1f;
+  top: 0;
+  bottom: 0;
+  left: var(--in);
+  width: calc(var(--out) - var(--in));
+  box-sizing: border-box;
+  border-top: 3px solid var(--trim);
+  border-bottom: 3px solid var(--trim);
   pointer-events: none;
-  z-index: 2;
 }
 
 .tl-handle {
   position: absolute;
-  top: 50%;
-  width: 12px;
-  height: 22px;
-  transform: translate(-50%, -50%);
-  border-radius: 3px;
-  background-color: #ffffff;
-  border: 1.5px solid #007aff;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  background: var(--trim);
   cursor: ew-resize;
-  touch-action: none;
-  z-index: 3;
-}
-
-.tl-handle:hover {
-  background-color: #f0f6ff;
-}
-
-.player-time {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.85em;
-  color: #6e6e73;
-}
-
-.export {
-  width: min(720px, 92vw);
-  margin: 16px auto 0;
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  touch-action: none;
+}
+
+.tl-handle::after {
+  content: "";
+  width: 2px;
+  height: 40%;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 1px;
+}
+
+.tl-handle-in {
+  left: var(--in);
+  transform: translateX(-100%);
+  border-radius: 4px 0 0 4px;
+}
+
+.tl-handle-out {
+  left: var(--out);
+  border-radius: 0 4px 4px 0;
+}
+
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--ph);
+  width: 2px;
+  background: #fff;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* ---- Export panel ----------------------------------------------------- */
+
+.export {
+  margin-top: var(--s2);
+  width: 100%;
+  max-width: max(420px, calc((100vh - 320px) * (var(--aspect))));
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
 }
 
 .export-meta {
   flex: 1 1 auto;
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  text-align: left;
+  gap: var(--s3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .export-duration {
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.export-label {
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
 }
 
 .export-format {
-  font-size: 0.85em;
-  color: #6e6e73;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--accent-2);
 }
 
 .export-button {
-  flex: 0 0 auto;
-  min-width: 96px;
+  flex: none;
+  min-width: 140px;
 }
 
-.export-button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-
-  .dropzone {
-    background-color: #1a1a1a;
-    border-color: #3a3a3c;
-  }
-
-  .dropzone-hint,
-  .meta-line,
-  .player-time,
-  .export-format {
-    color: #98989d;
-  }
-
-  .error {
-    color: #ff453a;
-  }
-
-  .tl-track {
-    background-color: #3a3a3c;
-  }
-
-  .tl-tick {
-    background-color: #6e6e73;
-  }
-
-  .tl-playhead {
-    background-color: #f6f6f6;
-  }
-
-  .tl-handle {
-    background-color: #1a1a1a;
-  }
-
-  .tl-handle:hover {
-    background-color: #243044;
-  }
+.export-error {
+  flex-basis: 100%;
+  margin: var(--s2) 0 0;
 }

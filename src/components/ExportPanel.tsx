@@ -17,24 +17,31 @@ export default function ExportPanel() {
   return (
     <section class="export">
       <div class="export-meta">
+        <span class="export-label">Clip</span>
         <span class="export-duration">
           {formatDuration(Math.max(0, outPoint() - inPoint()))}
         </span>
         <Show when={meta()}>
-          {(m) => <span class="export-format">{m().container}</span>}
+          {(m) => (
+            <>
+              <span class="export-label">Format</span>
+              <span class="export-format">{m().container}</span>
+            </>
+          )}
         </Show>
       </div>
 
       <button
-        class="export-button"
+        class="export export-button"
+        type="button"
         onClick={() => void exportClip()}
         disabled={exporting()}
       >
-        {exporting() ? "Exporting…" : "Export"}
+        {exporting() ? "Exporting…" : "Export clip"}
       </button>
 
       <Show when={exportError()}>
-        <p class="error">{exportError()}</p>
+        <p class="error export-error">{exportError()}</p>
       </Show>
     </section>
   );

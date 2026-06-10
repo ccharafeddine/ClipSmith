@@ -14,6 +14,8 @@ import {
   setOutPoint,
   setPlaying,
   togglePlay,
+  viewEnd,
+  setViewEnd,
 } from "../state";
 import { formatDuration } from "../format";
 import Timeline from "./Timeline";
@@ -27,12 +29,17 @@ export default function VideoPlayer() {
     return path ? convertFileSrc(path) : "";
   });
 
+  const selectionLength = () => Math.max(0, outPoint() - inPoint());
+
   function onLoadedMetadata(e: Event & { currentTarget: HTMLVideoElement }) {
     const d = e.currentTarget.duration;
     if (Number.isFinite(d)) {
       setDuration(d);
       // Clamp the seeded OUT to the element's true duration.
       if (outPoint() <= 0 || outPoint() > d) setOutPoint(d);
+      // Keep the zoom window valid: extend it to the true duration only while
+      // still fully zoomed out, so an explicit zoom isn't clobbered.
+      if (viewEnd() <= 0 || viewEnd() > d) setViewEnd(d);
     }
     setCurrentTime(0);
     setPlaying(false);
@@ -49,32 +56,35 @@ export default function VideoPlayer() {
 
   return (
     <section class="player">
-      <video
-        ref={(el) => registerVideo(el)}
-        class="player-video"
-        src={src()}
-        onLoadedMetadata={onLoadedMetadata}
-        onTimeUpdate={onTimeUpdate}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-      />
+      <div class="stage">
+        <video
+          ref={(el) => registerVideo(el)}
+          src={src()}
+          onLoadedMetadata={onLoadedMetadata}
+          onTimeUpdate={onTimeUpdate}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
+        />
+      </div>
 
-      <div class="player-controls">
+      <Timeline />
+
+      <div class="controls">
         <button
-          class="player-play"
+          type="button"
           onClick={togglePlay}
           aria-label={playing() ? "Pause" : "Play"}
         >
-          <Show when={playing()} fallback="▶">
-            ❚❚
+          <Show when={playing()} fallback="Play">
+            Pause
           </Show>
         </button>
-
-        <Timeline />
-
-        <span class="player-time">
+        <span class="time">
           {formatDuration(currentTime())} / {formatDuration(duration())}
+        </span>
+        <span class="selection-len">
+          Selection {selectionLength().toFixed(2)}s
         </span>
       </div>
     </section>
