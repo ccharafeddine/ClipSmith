@@ -1,4 +1,4 @@
-import { createEffect, createMemo, For, on, Show } from "solid-js";
+import { createEffect, createMemo, For, Show } from "solid-js";
 import {
   currentTime,
   duration,
@@ -53,25 +53,31 @@ export default function Timeline() {
 
   // Build the preview strip once per loaded video, sizing the thumbnail count to
   // the measured track width so the square thumbnails tile it without squishing.
-  // `on(filePath)` keeps this from re-firing as the duration is refined.
-  createEffect(
-    on(filePath, (path) => {
-      if (!path) return;
-      const d = duration();
-      if (d <= 0) return;
-      const w = track?.clientWidth ?? 0;
-      const count = Math.min(
-        MAX_THUMBS,
-        Math.max(MIN_THUMBS, Math.round(w / THUMB_PX) || 12),
-      );
-      void generateFilmstrip(path, d, count)
-        .then((uri) => {
-          // Ignore a late result if another video was loaded/closed meanwhile.
-          if (filePath() === path) setFilmstripSrc(uri);
-        })
-        .catch((e) => console.error("generate_filmstrip failed", e));
-    }),
-  );
+  // Reactive on filePath AND duration: probe can report 0 for some containers,
+  // with the real duration only arriving later from the element's metadata, so
+  // we wait for a positive duration and guard against regenerating per video.
+  let stripForPath = "";
+  createEffect(() => {
+    const path = filePath();
+    const d = duration();
+    if (!path || d <= 0) {
+      stripForPath = "";
+      return;
+    }
+    if (path === stripForPath) return;
+    stripForPath = path;
+    const w = track?.clientWidth ?? 0;
+    const count = Math.min(
+      MAX_THUMBS,
+      Math.max(MIN_THUMBS, Math.round(w / THUMB_PX) || 12),
+    );
+    void generateFilmstrip(path, d, count)
+      .then((uri) => {
+        // Ignore a late result if another video was loaded/closed meanwhile.
+        if (filePath() === path) setFilmstripSrc(uri);
+      })
+      .catch((e) => console.error("generate_filmstrip failed", e));
+  });
 
   // Position of a time within the visible window, as a clamped 0-100 percentage.
   const pct = (t: number) => {
@@ -86,11 +92,18 @@ export default function Timeline() {
     return viewStart() + frac * viewSpan();
   }
 
-  // Keyframe ticks visible in the current window (avoids piling sparse ticks
-  // against the edges when zoomed in).
-  const visibleKeyframes = createMemo(() =>
-    keyframes().filter((kf) => kf >= viewStart() && kf <= viewEnd()),
-  );
+  // Keyframe ticks visible in the current window. A long clip has hundreds of
+  // keyframes; fully zoomed out, their 1px ticks merge into a solid gray wash
+  // that hides the thumbnails. Only render them once they're sparse enough to
+  // read as individual guides (snapping uses keyframes() directly, so hiding the
+  // ticks costs nothing functionally).
+  const visibleKeyframes = createMemo(() => {
+    const inView = keyframes().filter(
+      (kf) => kf >= viewStart() && kf <= viewEnd(),
+    );
+    const maxTicks = Math.max(40, Math.floor((track?.clientWidth ?? 600) / 8));
+    return inView.length <= maxTicks ? inView : [];
+  });
 
   function startDrag(kind: DragKind, e: PointerEvent) {
     e.preventDefault();
