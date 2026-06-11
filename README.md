@@ -8,13 +8,15 @@
 
 ---
 
-ClipSmith is a small, fast desktop app for Mac and Windows. Open a local video,
-scrub a timeline to pick start and end points, and export a trimmed clip. The cut
-is **lossless**: it stream-copies the selected range with no re-encoding, so the
-output is bit-identical to the source and the export is near-instant. It's
-local-first: no accounts, no media library, no telemetry, no ads. Your video is
-read in place and never imported or copied; the only file written is the clip you
-export.
+ClipSmith is a small, fast desktop app for Mac and Windows. Open a local video
+(or paste a URL — YouTube and other sites work), scrub a timeline to pick start
+and end points, and export a trimmed clip. The cut is **lossless**: it
+stream-copies the selected range with no re-encoding, so the output is
+bit-identical to the source and the export is near-instant. It's local-first: no
+accounts, no media library, no telemetry, no ads. A local video is read in place
+and never imported or copied. The only feature that touches the network is URL
+import, which downloads the video to a temp file (deleted when you quit); the
+only file kept on disk is the clip you export.
 
 Built with [Tauri](https://v2.tauri.app) and [SolidJS](https://www.solidjs.com),
 with a bundled LGPL build of [FFmpeg](https://ffmpeg.org) for probing and the cut.
@@ -47,17 +49,23 @@ the handles, **the player is the preview** — there's no separate re-export ste
 
 ## Features
 
-- Open `mp4`, `mov`, `mkv`, `webm`, `avi`, `m4v` via file picker or drag-and-drop
+- Open `mp4`, `mov`, `mkv`, `webm`, `avi`, `m4v` via file picker
+- **Import from a URL** — paste a YouTube (or other site) link and ClipSmith
+  fetches the video with a bundled [yt-dlp](https://github.com/yt-dlp/yt-dlp);
+  direct links to a video file are downloaded over plain HTTP. A progress bar
+  and Cancel button show while it downloads. Video and audio are kept.
 - A timeline with **filmstrip thumbnails** and iOS-style trim handles,
   **zoomable** (scroll to zoom, cursor-anchored) for frame-accurate end points
 - **Magnetic keyframe snapping** on the start handle, with keyframe **ticks** on
   the timeline; the end handle is free
 - **Lossless stream-copy** export — near-instant, bit-identical, keeps audio and
   all other streams; output container matches the source
+- Exports default to an **Exports folder** (`<Documents>/ClipSmith/Exports`),
+  created on first export — the save dialog opens there with the name prefilled,
+  and you can still save anywhere
 - Looping playback between the trim handles, with the audio kept intact (the
   player doubles as the preview)
 - **Clear** the loaded video without opening another
-- Zero intermediate files: the only thing written to disk is your final clip
 - Dark, minimal interface
 - Native binaries for macOS and Windows
 
@@ -98,6 +106,10 @@ bash scripts/fetch-ffmpeg.sh        # Windows: BtbN LGPL static build
 bash scripts/build-ffmpeg-macos.sh  # macOS: compile an LGPL build from source
                                     # (needs Xcode CLT + `brew install nasm`)
 
+# Provide the bundled yt-dlp sidecar for URL import (refresh before each release;
+# yt-dlp goes stale as sites change their players).
+bash scripts/fetch-ytdlp.sh
+
 # Run in development
 npm run tauri dev
 
@@ -123,6 +135,9 @@ sidecar processes (never linked into the app), and keep their own licenses:
   Simple mode **never invokes a video encoder** — it only stream-copies — so no
   GPL encoder (e.g. `libx264`) is ever touched, which is what keeps the
   distribution LGPL/MIT clean. Source: <https://ffmpeg.org/download.html>.
+- **yt-dlp** (Unlicense / public domain), used only for URL import. Bundled as a
+  sidecar and refreshed per release via `scripts/fetch-ytdlp.sh`. Public domain,
+  so it's MIT-compatible to ship. Source: <https://github.com/yt-dlp/yt-dlp>.
 - **Font**: Syne (SIL Open Font License), bundled in `src/assets/fonts` with its
   license file. No web-font requests are made.
 

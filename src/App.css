@@ -202,6 +202,75 @@ button.export:hover:not(:disabled) {
   letter-spacing: 0.06em;
 }
 
+/* ---- URL import ------------------------------------------------------- */
+
+.loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.loader .dropzone {
+  margin: 0;
+}
+
+.url-row {
+  display: flex;
+  gap: var(--s2);
+  width: min(520px, 80vw);
+}
+
+.url-input {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--bg-control);
+  color: var(--fg);
+}
+
+.url-input::placeholder {
+  color: var(--fg-3);
+}
+
+.url-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dl-progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: min(520px, 80vw);
+}
+
+.dl-progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-control);
+  overflow: hidden;
+}
+
+.dl-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.15s linear;
+}
+
+.dl-progress-pct {
+  font-family: var(--font-mono);
+  font-size: var(--fs-num);
+  color: var(--fg-2);
+  min-width: 3.5ch;
+  text-align: right;
+}
+
 /* ---- File info -------------------------------------------------------- */
 
 .filename {

@@ -26,4 +26,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 base64 = "0.22"
+# URL import. native-tls uses the OS TLS stack (Secure Transport on macOS,
+# schannel on Windows): no aws-lc-sys C build, no extra disk. Used for the
+# direct-media-link download path; everything else goes through the yt-dlp sidecar.
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+# select!/sleep to race a download against a cancel flag so a stalled URL fetch
+# can be aborted promptly. tokio is already in the tree via tauri.
+tokio = { version = "1", features = ["time", "macros"] }
 

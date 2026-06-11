@@ -51,6 +51,20 @@ export function defaultSavePath(filename: string): Promise<string> {
 }
 
 /**
+ * Download a video from a URL and resolve to its local temp path. Direct file
+ * links are fetched over HTTP; everything else goes through the bundled yt-dlp
+ * sidecar. Emits "download-progress" events (0.0-1.0) while running.
+ */
+export function downloadVideo(url: string): Promise<string> {
+  return invoke<string>("download_video", { url });
+}
+
+/** Request the in-progress URL download to abort. */
+export function cancelDownload(): Promise<void> {
+  return invoke<void>("cancel_download");
+}
+
+/**
  * Build the timeline preview strip for a video and resolve to a PNG data URI
  * (no file is written to disk). `durationSecs` comes from the probe; `count` is
  * the number of square thumbnails to tile across the timeline.
