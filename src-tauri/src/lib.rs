@@ -17,6 +17,7 @@ pub fn run() {
             commands::export_clip,
             commands::default_save_path,
             commands::generate_filmstrip,
+            commands::generate_proxy,
             commands::download_video,
             commands::cancel_download
         ])

@@ -163,9 +163,88 @@ fn download_dir() -> PathBuf {
     std::env::temp_dir().join("clipsmith-dl")
 }
 
+/// Remove any leftover playback-proxy files (uniquely named, so glob by prefix).
+fn remove_proxy_files() {
+    if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("clipsmith-proxy") && name.ends_with(".mp4") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
 /// Best-effort removal of all temp files ClipSmith may have written. Call on exit.
 pub fn cleanup_temp() {
     let _ = std::fs::remove_dir_all(download_dir());
+    remove_proxy_files();
+}
+
+/// Transcode a lightweight H.264 proxy for codecs the webview can't decode
+/// (e.g. MPEG-4 ASP in `.avi`, HEVC, ProRes). Playback uses this proxy; the
+/// export still stream-copies the original, so the cut stays lossless and no
+/// encoder ever touches the exported clip. Audio is kept so the preview has
+/// sound. Returns the proxy file path.
+///
+/// The proxy encoder is platform-specific and LGPL-clean (never GPL libx264):
+/// macOS uses the hardware `h264_videotoolbox` (a system framework); Windows
+/// uses `libopenh264` from the bundled LGPL build.
+///
+/// # Errors
+/// Returns a user-facing message if ffmpeg can't be located or transcoding fails.
+#[tauri::command]
+pub async fn generate_proxy(app: AppHandle, path: String) -> Result<String, String> {
+    remove_proxy_files();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let out = std::env::temp_dir().join(format!("clipsmith-proxy-{nanos}.mp4"));
+    let out_str = out.to_string_lossy().into_owned();
+
+    #[cfg(target_os = "macos")]
+    let vcodec = "h264_videotoolbox";
+    #[cfg(not(target_os = "macos"))]
+    let vcodec = "libopenh264";
+
+    let output = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("could not locate ffmpeg: {e}"))?
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            &path,
+            // Don't upscale; cap width at 1280 for a crisp-enough trim preview.
+            "-vf",
+            "scale='min(1280,iw)':-2",
+            "-c:v",
+            vcodec,
+            "-b:v",
+            "4000k",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-movflags",
+            "+faststart",
+            &out_str,
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg failed to start: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("could not build preview: {}", stderr.trim()));
+    }
+    Ok(out_str)
 }
 
 /// User-facing message returned when a download is cancelled. The frontend

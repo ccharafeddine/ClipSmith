@@ -65,6 +65,15 @@ export function cancelDownload(): Promise<void> {
 }
 
 /**
+ * Transcode a lightweight H.264 playback proxy for a codec the webview can't
+ * decode (e.g. MPEG-4 in `.avi`, HEVC, ProRes); resolves to its local path.
+ * Playback uses the proxy; export still cuts the original losslessly.
+ */
+export function generateProxy(path: string): Promise<string> {
+  return invoke<string>("generate_proxy", { path });
+}
+
+/**
  * Build the timeline preview strip for a video and resolve to a PNG data URI
  * (no file is written to disk). `durationSecs` comes from the probe; `count` is
  * the number of square thumbnails to tile across the timeline.

@@ -350,6 +350,35 @@ button.export:hover:not(:disabled) {
   height: 100%;
 }
 
+/* Overlay shown while a playback proxy builds, or when preview isn't possible.
+   Sits centered over the (black) stage; the timeline and export still work. */
+.stage-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  padding: var(--s4);
+  text-align: center;
+  background: color-mix(in srgb, #000 60%, transparent);
+}
+
+.stage-msg p {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.stage-msg .stage-msg-sub {
+  max-width: 42ch;
+  color: var(--fg-2);
+  font-size: var(--fs-label);
+  font-weight: 400;
+}
+
 .controls {
   display: flex;
   align-items: center;
