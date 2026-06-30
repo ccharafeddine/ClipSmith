@@ -5,7 +5,8 @@
 # yt-dlp is public domain (Unlicense), so it's MIT-compatible to bundle.
 #
 # Used to import a video from a URL (the only feature that touches the network).
-# The macOS binary is a universal build; we just name it per host triple.
+# The macOS binary is a fat universal build; for a Tauri universal build it is
+# placed under the universal triple and copied to both per-arch names.
 #
 # MAINTAINER NOTE: yt-dlp goes stale as sites change their players. Re-run this
 # before every release build so URL extraction keeps working in the wild.
@@ -26,8 +27,13 @@ case "$TRIPLE" in
     dest="$BIN_DIR/yt-dlp-${TRIPLE}.exe"
     ;;
   *apple-darwin)
+    # yt-dlp_macos is already a fat universal binary. A Tauri universal build
+    # wants all three names: the two per-arch sidecars (resolved by each per-arch
+    # sub-build) and the universal one (copied at the final bundle). The fat
+    # binary satisfies every slot, so download once and copy to all three.
     url="$BASE/yt-dlp_macos"
-    dest="$BIN_DIR/yt-dlp-${TRIPLE}"
+    dest="$BIN_DIR/yt-dlp-universal-apple-darwin"
+    darwin_copies="aarch64-apple-darwin x86_64-apple-darwin"
     ;;
   *)
     echo "unsupported host triple: $TRIPLE" >&2
@@ -39,3 +45,9 @@ echo "Downloading yt-dlp for ${TRIPLE}..."
 curl -fL --retry 3 -o "$dest" "$url"
 chmod +x "$dest"
 echo "placed $(basename "$dest") ($(du -h "$dest" | cut -f1))"
+
+for triple in ${darwin_copies:-}; do
+  cp "$dest" "$BIN_DIR/yt-dlp-${triple}"
+  chmod +x "$BIN_DIR/yt-dlp-${triple}"
+  echo "placed yt-dlp-${triple} (universal copy)"
+done

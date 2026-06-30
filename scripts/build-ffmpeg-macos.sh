@@ -1,34 +1,38 @@
 #!/usr/bin/env bash
 #
 # build-ffmpeg-macos.sh — compile a GPL ffmpeg + ffprobe (with a STATIC libx264)
-# from source for the host macOS architecture, and place them in
-# src-tauri/binaries/ with the Rust host target-triple suffix Tauri's externalBin
-# bundler expects.
+# from source for BOTH macOS architectures (arm64 native + x86_64 cross), then
+# lipo them into a universal binary. A Tauri universal-apple-darwin build needs
+# THREE sidecar names per tool: the two per-arch `binaries/<name>-{aarch64,
+# x86_64}-apple-darwin` (resolved by each per-arch sub-build) and the fat
+# `binaries/<name>-universal-apple-darwin` (copied at the final bundle; Tauri does
+# not lipo the pair itself). So we keep both per-arch binaries AND the universal.
 #
 # Why compile instead of download: ClipSmith re-encodes every export with libx264
 # (frame-accurate cuts + crop), and no suitable static GPL macOS build is
-# published. Building libx264 statically and linking it in keeps the ffmpeg
-# sidecar a single self-contained binary that depends only on macOS system
-# frameworks — portable across Macs, no Homebrew dylib path baked in.
+# published. Building libx264 statically and linking it in keeps each ffmpeg
+# sidecar self-contained, depending only on macOS system frameworks — portable
+# across Macs, no Homebrew dylib path baked in. libx264 is GPL, so this is
+# --enable-gpl (that is what makes ClipSmith GPL; see LICENSE). --enable-
+# videotoolbox keeps the system H.264 encoder available for the playback proxy.
 #
-# libx264 is GPL, so this build is configured --enable-gpl. That is what makes
-# ClipSmith a GPL app (see LICENSE); it is intentional, not a mistake.
+# Building a universal binary on the Apple Silicon runner avoids the scarce,
+# deprecated macos-13 Intel runner entirely (it tends to sit queued forever).
 #
-# Run on a macOS host whose native arch matches the target you want (Apple
-# Silicon -> aarch64-apple-darwin, Intel -> x86_64-apple-darwin). Requires the
-# Xcode command line tools, plus `nasm` for asm (brew install nasm). x264 is
-# built from source here, so Homebrew's x264 is NOT required.
+# Run on an Apple Silicon macOS host: the arm64 build is native, the x86_64 build
+# cross-compiles via `clang -arch x86_64`. Requires Xcode CLT + `brew install
+# nasm` (x264/ffmpeg x86 asm).
 
 set -euo pipefail
 
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1}"
-# x264 has no stable release tarballs; its master "stable" branch is what
-# everyone ships. Pin via the source tree's snapshot tarball from videolan.
+# x264 ships no versioned release tarballs; the "stable" branch snapshot is what
+# everyone packages.
 X264_TARBALL="${X264_TARBALL:-https://code.videolan.org/videolan/x264/-/archive/stable/x264-stable.tar.bz2}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$REPO_ROOT/src-tauri/binaries"
-TRIPLE="$(rustc -vV | sed -n 's/host: //p')"
+UNIVERSAL_TRIPLE="universal-apple-darwin"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "error: this script must run on macOS (host is $(uname -s))" >&2
@@ -39,69 +43,111 @@ mkdir -p "$BIN_DIR"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-PREFIX="$WORK/deps"   # static libx264 install prefix (headers + libx264.a)
 cd "$WORK"
 
-# ---- 1. Build a static libx264 ------------------------------------------------
 echo "Downloading x264 source..."
 curl -fL --retry 3 -o x264.tar.bz2 "$X264_TARBALL"
 mkdir x264-src
 tar xf x264.tar.bz2 -C x264-src --strip-components=1
-cd x264-src
-echo "Configuring x264 (static, no CLI)..."
-./configure \
-  --prefix="$PREFIX" \
-  --enable-static \
-  --disable-cli \
-  --enable-pic
-make -j"$(sysctl -n hw.ncpu)"
-make install
-cd "$WORK"
+X264_SRC="$WORK/x264-src"
 
-# ---- 2. Build ffmpeg/ffprobe against the static libx264 -----------------------
 echo "Downloading ffmpeg ${FFMPEG_VERSION} source..."
 curl -fL --retry 3 -o ffmpeg.tar.xz \
   "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 tar xf ffmpeg.tar.xz
-cd "ffmpeg-${FFMPEG_VERSION}"
+FFMPEG_SRC="$WORK/ffmpeg-${FFMPEG_VERSION}"
 
-echo "Configuring ffmpeg (GPL + static libx264)..."
-# Point pkg-config at our static x264 so --enable-libx264 links libx264.a, not a
-# Homebrew dylib. --pkg-config-flags=--static pulls x264's static deps too.
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
-./configure \
-  --prefix="$WORK/out" \
-  --enable-gpl \
-  --enable-libx264 \
-  --pkg-config-flags=--static \
-  --extra-cflags="-I$PREFIX/include" \
-  --extra-ldflags="-L$PREFIX/lib" \
-  --disable-nonfree \
-  --disable-doc \
-  --disable-ffplay \
-  --disable-debug \
-  --enable-pic
+# Build a static libx264 then ffmpeg/ffprobe against it, for one arch, and copy
+# the tools into BIN_DIR under the matching Rust target triple. $1 = short label,
+# $2 = target triple, $3 = "cross" for the non-host arch (empty for native).
+build_arch() {
+  local label="$1" triple="$2" mode="${3:-}"
+  local prefix="$WORK/deps-${label}"        # static libx264 install prefix
+  local xbuild="$WORK/x264-build-${label}"
+  local fbuild="$WORK/ffmpeg-build-${label}"
 
-make -j"$(sysctl -n hw.ncpu)"
-make install
+  echo "=== [$label] building static libx264 ==="
+  # x264 builds in-tree; use a fresh copy per arch so configs don't collide.
+  cp -R "$X264_SRC" "$xbuild"
+  cd "$xbuild"
+  local x264_flags=(--prefix="$prefix" --enable-static --disable-cli --enable-pic)
+  if [ "$mode" = "cross" ]; then
+    # Cross to x86_64 on an arm64 host: target via --host + an x86_64 clang.
+    CC="clang -arch x86_64" ./configure "${x264_flags[@]}" \
+      --host=x86_64-apple-darwin
+  else
+    ./configure "${x264_flags[@]}"
+  fi
+  make -j"$(sysctl -n hw.ncpu)"
+  make install
 
-# Sanity: the build must actually include libx264, and the binary must not link a
-# non-system dylib for it (otherwise it won't run on a clean Mac).
-if ! "$WORK/out/bin/ffmpeg" -hide_banner -buildconf | grep -q -- '--enable-libx264'; then
-  echo "error: built ffmpeg lacks --enable-libx264; refusing (ClipSmith re-encodes H.264)" >&2
-  exit 1
-fi
-if otool -L "$WORK/out/bin/ffmpeg" | grep -qi 'x264'; then
-  echo "error: ffmpeg links a dynamic libx264; the static link did not take" >&2
-  otool -L "$WORK/out/bin/ffmpeg" | grep -i 'x264' >&2
-  exit 1
-fi
+  echo "=== [$label] building ffmpeg (GPL + static libx264 + videotoolbox) ==="
+  mkdir -p "$fbuild"
+  cd "$fbuild"
+  local ff_flags=(
+    --prefix="$fbuild/out"
+    --enable-gpl
+    --enable-libx264
+    --enable-videotoolbox
+    --pkg-config-flags=--static
+    --extra-cflags="-I$prefix/include"
+    --extra-ldflags="-L$prefix/lib"
+    --disable-nonfree
+    --disable-doc
+    --disable-ffplay
+    --disable-debug
+    --enable-pic
+  )
+  if [ "$mode" = "cross" ]; then
+    ff_flags+=(
+      --enable-cross-compile
+      --arch=x86_64
+      --target-os=darwin
+      --cc="clang -arch x86_64"
+      --extra-ldflags="-arch x86_64 -L$prefix/lib"
+    )
+  fi
+  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" "$FFMPEG_SRC/configure" "${ff_flags[@]}"
+  make -j"$(sysctl -n hw.ncpu)"
+  make install
 
-cp "$WORK/out/bin/ffmpeg" "$BIN_DIR/ffmpeg-${TRIPLE}"
-cp "$WORK/out/bin/ffprobe" "$BIN_DIR/ffprobe-${TRIPLE}"
-chmod +x "$BIN_DIR/ffmpeg-${TRIPLE}" "$BIN_DIR/ffprobe-${TRIPLE}"
+  # Each per-arch binary must include libx264 and must not link a dynamic x264
+  # (otool inspects any mach-o regardless of host arch).
+  if ! "$fbuild/out/bin/ffmpeg" -hide_banner -buildconf | grep -q -- '--enable-libx264'; then
+    echo "error: [$label] ffmpeg lacks --enable-libx264" >&2
+    exit 1
+  fi
+  if otool -L "$fbuild/out/bin/ffmpeg" | grep -qi 'x264'; then
+    echo "error: [$label] ffmpeg links a dynamic libx264; static link failed" >&2
+    otool -L "$fbuild/out/bin/ffmpeg" | grep -i 'x264' >&2
+    exit 1
+  fi
 
-echo "Built GPL ffmpeg + ffprobe (static libx264) for ${TRIPLE}:"
-"$BIN_DIR/ffmpeg-${TRIPLE}" -hide_banner -version | head -1
-echo "  -> ffmpeg-${TRIPLE}"
-echo "  -> ffprobe-${TRIPLE}"
+  local tool
+  for tool in ffmpeg ffprobe; do
+    cp "$fbuild/out/bin/${tool}" "$BIN_DIR/${tool}-${triple}"
+    chmod +x "$BIN_DIR/${tool}-${triple}"
+  done
+  echo "[$label] built ffmpeg + ffprobe for ${triple}."
+  cd "$WORK"
+}
+
+# Native arm64, then cross x86_64.
+build_arch "arm64" "aarch64-apple-darwin"
+build_arch "x86_64" "x86_64-apple-darwin" "cross"
+
+# Fuse the per-arch binaries into one fat universal binary named for the
+# universal target triple — what Tauri's final bundle step copies.
+for tool in ffmpeg ffprobe; do
+  out="$BIN_DIR/${tool}-${UNIVERSAL_TRIPLE}"
+  lipo -create \
+    "$BIN_DIR/${tool}-aarch64-apple-darwin" \
+    "$BIN_DIR/${tool}-x86_64-apple-darwin" \
+    -output "$out"
+  chmod +x "$out"
+  echo "lipo'd universal ${tool}:"
+  lipo -info "$out"
+done
+
+echo "All macOS ffmpeg/ffprobe sidecars:"
+ls -la "$BIN_DIR"/ffmpeg-*-apple-darwin "$BIN_DIR"/ffprobe-*-apple-darwin

@@ -81,8 +81,9 @@ Download the latest installer from the
 
 - **Windows**: the `.msi`. Windows SmartScreen may warn on an unsigned app;
   choose **More info → Run anyway**.
-- **macOS**: the `.dmg` for your chip (Apple Silicon or Intel). The app is
-  unsigned, so the first launch needs the Gatekeeper workaround:
+- **macOS**: the `.dmg` (one universal build runs on both Apple Silicon and
+  Intel). The app is unsigned, so the first launch needs the Gatekeeper
+  workaround:
 
   > **Right-click** (or Control-click) the app in Applications → **Open** →
   > **Open** again in the dialog. You only need to do this once.

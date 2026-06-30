@@ -1,10 +1,11 @@
 name: release
 
 # Build installers and publish a draft GitHub Release when a v* tag is pushed.
-# Produces a .dmg (Apple Silicon + Intel) and a .msi (Windows x64). FFmpeg/ffprobe
-# sidecars are GPL (bundle libx264 for H.264 re-encode): downloaded prebuilt on
-# Windows, compiled from source with --enable-gpl --enable-libx264 (static x264)
-# on macOS. See CLAUDE.md and LICENSE.
+# Produces one universal .dmg (Apple Silicon + Intel, built on the arm64 runner)
+# and a .msi (Windows x64). FFmpeg/ffprobe sidecars are GPL (bundle libx264 for
+# H.264 re-encode): downloaded prebuilt on Windows, compiled from source with
+# --enable-gpl --enable-libx264 (static x264, both arches lipo'd) on macOS.
+# See CLAUDE.md and LICENSE.
 on:
   push:
     tags:
@@ -18,12 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14 # Apple Silicon
-            target: aarch64-apple-darwin
-          - platform: macos-13 # Intel
-            target: x86_64-apple-darwin
+          # One universal macOS .dmg built on the Apple Silicon runner (arm64
+          # native + x86_64 cross). Avoids the scarce, deprecated macos-13 Intel
+          # runner entirely (it tends to sit queued forever).
+          - platform: macos-14
+            rustTargets: aarch64-apple-darwin,x86_64-apple-darwin
+            tauriTarget: universal-apple-darwin
           - platform: windows-latest
-            target: x86_64-pc-windows-msvc
+            rustTargets: x86_64-pc-windows-msvc
+            tauriTarget: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -32,7 +36,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rustTargets }}
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -69,4 +73,4 @@ jobs:
           releaseName: "ClipSmith ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.tauriTarget }}
