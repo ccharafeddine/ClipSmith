@@ -2,8 +2,9 @@ name: release
 
 # Build installers and publish a draft GitHub Release when a v* tag is pushed.
 # Produces a .dmg (Apple Silicon + Intel) and a .msi (Windows x64). FFmpeg/ffprobe
-# sidecars are LGPL: downloaded prebuilt on Windows, compiled from source with
-# --disable-gpl on macOS (no LGPL macOS prebuilt exists). See CLAUDE.md.
+# sidecars are GPL (bundle libx264 for H.264 re-encode): downloaded prebuilt on
+# Windows, compiled from source with --enable-gpl --enable-libx264 (static x264)
+# on macOS. See CLAUDE.md and LICENSE.
 on:
   push:
     tags:
@@ -42,12 +43,12 @@ jobs:
         run: npm ci
 
       # Sidecars must exist before the Tauri bundle step resolves externalBin.
-      - name: Fetch FFmpeg sidecars (Windows, LGPL static prebuilt)
+      - name: Fetch FFmpeg sidecars (Windows, GPL static prebuilt with libx264)
         if: runner.os == 'Windows'
         shell: bash
         run: bash scripts/fetch-ffmpeg.sh
 
-      - name: Build FFmpeg sidecars (macOS, LGPL from source)
+      - name: Build FFmpeg sidecars (macOS, GPL + static libx264 from source)
         if: runner.os == 'macOS'
         run: |
           brew install nasm

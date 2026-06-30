@@ -2,6 +2,8 @@ import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { generateProxy } from "../ipc";
 import {
+  cropMode,
+  cropRect,
   currentTime,
   duration,
   filePath,
@@ -14,12 +16,14 @@ import {
   setDuration,
   setOutPoint,
   setPlaying,
+  toggleCropMode,
   togglePlay,
   viewEnd,
   setViewEnd,
 } from "../state";
 import { formatDuration } from "../format";
 import Timeline from "./Timeline";
+import CropOverlay from "./CropOverlay";
 
 // Renders the loaded video with custom transport controls. Audio is kept
 // intact — the element is never muted, since the player doubles as the
@@ -126,6 +130,7 @@ export default function VideoPlayer() {
             </p>
           </div>
         </Show>
+        <CropOverlay />
       </div>
 
       <Timeline />
@@ -138,6 +143,17 @@ export default function VideoPlayer() {
         >
           <Show when={playing()} fallback="Play">
             Pause
+          </Show>
+        </button>
+        <button
+          type="button"
+          class="crop-toggle"
+          classList={{ active: cropMode() }}
+          aria-pressed={cropMode()}
+          onClick={toggleCropMode}
+        >
+          <Show when={cropRect()} fallback="Crop">
+            {cropMode() ? "Done" : "Crop ✓"}
           </Show>
         </button>
         <span class="time">

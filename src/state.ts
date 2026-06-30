@@ -3,11 +3,12 @@
 
 import { createSignal } from "solid-js";
 import { save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import {
   exportClip as exportClipIpc,
   defaultSavePath,
-  listKeyframes,
   probeVideo,
+  type CropRect,
   type VideoMeta,
 } from "./ipc";
 
@@ -23,7 +24,6 @@ export const ALLOWED_EXTENSIONS = [
 
 export const [filePath, setFilePath] = createSignal<string | null>(null);
 export const [meta, setMeta] = createSignal<VideoMeta | null>(null);
-export const [keyframes, setKeyframes] = createSignal<number[]>([]);
 // Timeline preview strip as a PNG data URI, or "" until generated / on failure.
 export const [filmstripSrc, setFilmstripSrc] = createSignal("");
 export const [loading, setLoading] = createSignal(false);
@@ -35,9 +35,15 @@ export const [currentTime, setCurrentTime] = createSignal(0);
 export const [duration, setDuration] = createSignal(0);
 export const [playing, setPlaying] = createSignal(false);
 
-// Trim range. inPoint is always a keyframe (snapped); outPoint is free.
+// Trim range. Both handles are free and frame-accurate: the export re-encodes,
+// so the cut no longer has to start on a keyframe.
 export const [inPoint, setInPoint] = createSignal(0);
 export const [outPoint, setOutPoint] = createSignal(0);
+
+// Crop. `cropRect` is the selection in source pixels (or null for no crop);
+// `cropMode` toggles the on-video crop overlay.
+export const [cropRect, setCropRect] = createSignal<CropRect | null>(null);
+export const [cropMode, setCropMode] = createSignal(false);
 
 // Visible timeline window, in seconds, for zoom. [viewStart, viewEnd] is a
 // sub-range of [0, duration] that the Timeline scales to fill its width; the
@@ -49,6 +55,8 @@ export const [viewEnd, setViewEnd] = createSignal(0);
 export const [exporting, setExporting] = createSignal(false);
 export const [exportError, setExportError] = createSignal("");
 export const [exportedPath, setExportedPath] = createSignal<string | null>(null);
+// Re-encode progress, 0.0-1.0, fed by the backend's "export-progress" events.
+export const [exportProgress, setExportProgress] = createSignal(0);
 
 /** Shortest selectable clip, in seconds, keeping IN strictly before OUT. */
 export const MIN_CLIP = 0.05;
@@ -84,12 +92,12 @@ export function togglePlay(): void {
 }
 
 /**
- * Set the IN point at the current playhead, snapped to the nearest keyframe at
- * or before it (IN must land on a keyframe), kept strictly before OUT.
+ * Set the IN point at the current playhead (free, frame-accurate), kept strictly
+ * before OUT.
  */
 export function setInAtPlayhead(): void {
   const limit = Math.max(0, outPoint() - MIN_CLIP);
-  setInPoint(snapIn(Math.min(currentTime(), limit), keyframes()));
+  setInPoint(Math.min(currentTime(), limit));
 }
 
 /** Set the OUT point at the current playhead (free), kept strictly after IN. */
@@ -109,17 +117,27 @@ export function stepFrame(direction: 1 | -1): void {
 }
 
 /**
- * Snap a requested IN time to the nearest keyframe at or before it. The IN
- * handle is magnetic: with `-c copy` the cut must start on a keyframe.
- * Falls back to 0.0 when nothing qualifies. `kfs` must be sorted ascending.
+ * Toggle the crop overlay. Entering crop mode with no rectangle yet seeds a
+ * centered 80% box (in source pixels) so there's something to drag.
  */
-export function snapIn(time: number, kfs: number[]): number {
-  let snapped = 0;
-  for (const kf of kfs) {
-    if (kf <= time) snapped = kf;
-    else break;
+export function toggleCropMode(): void {
+  const m = meta();
+  if (!m) return;
+  const next = !cropMode();
+  if (next && !cropRect()) {
+    const w = Math.round(m.width * 0.8);
+    const h = Math.round(m.height * 0.8);
+    const x = Math.round((m.width - w) / 2);
+    const y = Math.round((m.height - h) / 2);
+    setCropRect({ x, y, w, h });
   }
-  return snapped;
+  setCropMode(next);
+}
+
+/** Remove the crop entirely and leave crop mode. */
+export function clearCrop(): void {
+  setCropRect(null);
+  setCropMode(false);
 }
 
 /** The file name (no directory) of the currently loaded video, or "". */
@@ -161,6 +179,8 @@ export async function loadVideo(path: string): Promise<void> {
     setFilePath(path);
     setMeta(probed);
     setFilmstripSrc("");
+    setCropRect(null);
+    setCropMode(false);
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -172,22 +192,11 @@ export async function loadVideo(path: string): Promise<void> {
     // Start fully zoomed out: the window is the whole clip.
     setViewStart(0);
     setViewEnd(probed.duration_secs);
-
-    // Keyframes are needed for IN snapping but not for playback, so a failure
-    // here degrades gracefully to [0.0] rather than failing the whole load.
-    try {
-      const kfs = await listKeyframes(path);
-      setKeyframes(kfs.length > 0 ? kfs : [0]);
-    } catch (e) {
-      console.error("list_keyframes failed", e);
-      setKeyframes([0]);
-    }
     // The preview strip is generated by the Timeline once it has measured its
     // width (so the thumbnail count tiles cleanly); see Timeline.tsx.
   } catch (e) {
     setFilePath(null);
     setMeta(null);
-    setKeyframes([]);
     setFilmstripSrc("");
     setLoadError(String(e));
   } finally {
@@ -208,7 +217,6 @@ export function closeVideo(): void {
   }
   setFilePath(null);
   setMeta(null);
-  setKeyframes([]);
   setFilmstripSrc("");
   setLoadError("");
   setCurrentTime(0);
@@ -216,18 +224,22 @@ export function closeVideo(): void {
   setPlaying(false);
   setInPoint(0);
   setOutPoint(0);
+  setCropRect(null);
+  setCropMode(false);
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
   setExportedPath(null);
+  setExportProgress(0);
 }
 
 /**
- * Export the current trim range as a lossless clip. Opens a save dialog
- * defaulting to `{source_stem}_clip.{ext}` in the source container, then runs
- * the stream-copy cut. No-op if no file is loaded, an export is already in
- * flight, or the user cancels the dialog. The output extension matches the
- * source so `-c copy` always succeeds.
+ * Export the current trim range as a frame-accurate H.264/AAC mp4, optionally
+ * cropped. Opens a save dialog defaulting to `{source_stem}_clip.mp4` in the
+ * Exports folder, then runs the libx264 re-encode while reflecting progress.
+ * No-op if no file is loaded, an export is already in flight, or the user
+ * cancels the dialog. Output is always `.mp4`, since the re-encode is no longer
+ * bound to the source container.
  */
 export async function exportClip(): Promise<void> {
   const input = filePath();
@@ -237,11 +249,10 @@ export async function exportClip(): Promise<void> {
   const clipDuration = outPoint() - start;
   if (clipDuration <= 0) return;
 
-  const ext = extensionOf(input);
   const name = fileName();
   const dot = name.lastIndexOf(".");
   const stem = dot === -1 ? name : name.slice(0, dot);
-  const defaultName = ext ? `${stem}_clip.${ext}` : `${stem}_clip`;
+  const defaultName = `${stem}_clip.mp4`;
 
   // Default the dialog into the Exports folder (Rust creates it on demand).
   // If that can't be resolved, fall back to a bare filename so the dialog still
@@ -255,18 +266,24 @@ export async function exportClip(): Promise<void> {
 
   const output = await save({
     defaultPath,
-    filters: ext ? [{ name: "Video", extensions: [ext] }] : undefined,
+    filters: [{ name: "Video", extensions: ["mp4"] }],
   });
   if (typeof output !== "string") return;
 
   setExportError("");
+  setExportProgress(0);
   setExporting(true);
+  // Reflect the backend's re-encode progress on the Export button / bar.
+  const unlisten = await listen<number>("export-progress", (e) => {
+    setExportProgress(typeof e.payload === "number" ? e.payload : 0);
+  });
   try {
-    await exportClipIpc(input, output, start, clipDuration);
+    await exportClipIpc(input, output, start, clipDuration, cropRect());
     setExportedPath(output);
   } catch (e) {
     setExportError(String(e));
   } finally {
+    unlisten();
     setExporting(false);
   }
 }

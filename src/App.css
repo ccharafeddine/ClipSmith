@@ -1,6 +1,6 @@
 /* Cyberminimalism, shared with the sibling app GifSmith. All values come from
    tokens.css (the single source of truth). The iOS trim-handle rules are
-   intentionally preserved; ClipSmith adds keyframe ticks on the strip. */
+   intentionally preserved; both trim handles are free and frame-accurate. */
 
 * {
   box-sizing: border-box;
@@ -379,6 +379,62 @@ button.export:hover:not(:disabled) {
   font-weight: 400;
 }
 
+/* ---- Crop overlay ----------------------------------------------------------
+   Covers the stage while cropping. The container ignores pointer events so the
+   video underneath stays interactive; only the box and its handles catch them.
+   The box dims everything outside it with a huge spread box-shadow. */
+.crop-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.crop-box {
+  position: absolute;
+  pointer-events: auto;
+  cursor: move;
+  border: 1.5px solid var(--trim);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--trim);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  touch-action: none;
+}
+
+.crop-nw {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+.crop-ne {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+.crop-sw {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+.crop-se {
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+}
+
+.crop-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .controls {
   display: flex;
   align-items: center;
@@ -405,7 +461,7 @@ button.export:hover:not(:disabled) {
 
 /* ---- Timeline -------------------------------------------------------------
    The iOS trim handles (shape, violet color, behavior) carried over from
-   GifSmith. ClipSmith renders keyframe ticks behind the dim/selection. */
+   GifSmith. Both handles are free and frame-accurate. */
 
 .timeline-wrap {
   width: 100%;
@@ -441,8 +497,7 @@ button.export:hover:not(:disabled) {
   height: 100%;
 }
 
-/* Keyframe ticks: dim vertical guides marking valid IN positions. */
-/* Thumbnail strip behind the ticks/dim/selection; left/width set inline per zoom. */
+/* Thumbnail strip behind the dim/selection; left/width set inline per zoom. */
 .tl-filmstrip {
   position: absolute;
   top: 0;
@@ -450,16 +505,6 @@ button.export:hover:not(:disabled) {
   object-fit: fill;
   pointer-events: none;
   -webkit-user-drag: none;
-}
-
-.tl-tick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  /* left is set inline per keyframe (percentage within the view window). */
-  width: 1px;
-  background: var(--kf-tick);
-  pointer-events: none;
 }
 
 .tl-dim {
@@ -574,9 +619,51 @@ button.export:hover:not(:disabled) {
   color: var(--accent-2);
 }
 
+.export-crop {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--accent-2);
+}
+
+.crop-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+  border-radius: 50%;
+  color: var(--fg-3);
+  background: transparent;
+}
+
+.crop-clear:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .export-button {
   flex: none;
   min-width: 140px;
+}
+
+/* Re-encode progress bar; fill width is set inline from export-progress. */
+.export-progress {
+  flex-basis: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-control);
+  overflow: hidden;
+}
+
+.export-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.15s linear;
 }
 
 .export-error {

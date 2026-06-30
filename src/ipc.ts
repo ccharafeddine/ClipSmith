@@ -27,18 +27,33 @@ export function listKeyframes(path: string): Promise<number[]> {
   return invoke<number[]>("list_keyframes", { path });
 }
 
+/** A crop rectangle in source pixels. Omitted/undefined means no crop. */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /**
  * Export the range `[start, start + duration)` of `input` to `output` as a
- * lossless stream copy. `start` must be keyframe-snapped and `output`'s
- * extension must equal `input`'s.
+ * frame-accurate H.264/AAC mp4 (libx264 re-encode), optionally cropped. `output`
+ * is always `.mp4`. Emits "export-progress" events (0.0-1.0) while running.
  */
 export function exportClip(
   input: string,
   output: string,
   start: number,
   duration: number,
+  crop: CropRect | null,
 ): Promise<void> {
-  return invoke<void>("export_clip", { input, output, start, duration });
+  return invoke<void>("export_clip", {
+    input,
+    output,
+    start,
+    duration,
+    crop: crop ?? undefined,
+  });
 }
 
 /**

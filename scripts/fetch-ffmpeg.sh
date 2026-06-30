@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# fetch-ffmpeg.sh — download LGPL FFmpeg + ffprobe sidecars for ClipSmith.
+# fetch-ffmpeg.sh — download GPL FFmpeg + ffprobe sidecars for ClipSmith.
 #
 # Places binaries in src-tauri/binaries/ named {name}-{target-triple}, the
 # layout Tauri's externalBin / sidecar mechanism requires.
 #
-# ClipSmith simple mode only ever stream-copies (`ffmpeg -c copy`); it never
-# invokes a video encoder. An LGPL build (no GPL libx264) is therefore both
-# sufficient and required — a GPL build would force the whole app to GPL.
+# ClipSmith re-encodes every export with libx264 (H.264) so cuts are
+# frame-accurate and crop is possible. libx264 is GPL, which relicenses
+# ClipSmith to GPL (see LICENSE). A GPL FFmpeg build bundling libx264 is
+# therefore both required and expected here.
 #
-# Windows: BtbN's static "lgpl" release — one self-contained .exe, no DLLs.
-# macOS:   no LGPL prebuilt exists, so it's compiled from source with
-#          --disable-gpl by scripts/build-ffmpeg-macos.sh (invoked here when run
-#          on a Mac, and by CI on macOS runners).
+# Windows: BtbN's static "gpl" release — one self-contained .exe, no DLLs,
+#          includes libx264.
+# macOS:   no suitable static prebuilt exists, so it's compiled from source with
+#          --enable-gpl --enable-libx264 by scripts/build-ffmpeg-macos.sh
+#          (invoked here when run on a Mac, and by CI on macOS runners).
 #
 set -euo pipefail
 
@@ -23,8 +25,9 @@ mkdir -p "$BIN_DIR"
 WIN_TRIPLE="x86_64-pc-windows-msvc"
 MAC_TRIPLES=("x86_64-apple-darwin" "aarch64-apple-darwin")
 
-# BtbN auto-build: the "lgpl" variant is configured WITHOUT --enable-gpl.
-BTBN_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip"
+# BtbN auto-build: the "gpl" variant is configured WITH --enable-gpl and bundles
+# libx264 (and other GPL codecs), which ClipSmith needs to re-encode H.264.
+BTBN_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -51,23 +54,23 @@ fetch_windows() {
   curl -fL --retry 3 -o "$zip" "$BTBN_URL"
   extract_zip "$zip" "$tmp"
 
-  # Archive layout: ffmpeg-master-latest-win64-lgpl/bin/{ffmpeg,ffprobe}.exe
+  # Archive layout: ffmpeg-master-latest-win64-gpl/bin/{ffmpeg,ffprobe}.exe
   src="$(dirname "$(find "$tmp" -name 'ffmpeg.exe' -print -quit)")"
   [ -n "$src" ] && [ -f "$src/ffmpeg.exe" ] || {
     echo "error: ffmpeg.exe not found inside the downloaded archive" >&2
     return 1
   }
 
-  # Guard the LGPL-only constraint: refuse any build that advertises GPL.
+  # ClipSmith re-encodes with libx264, so require a build that actually ships it.
   # Only runnable when the host can execute a Windows .exe (i.e. on Windows).
   if "$src/ffmpeg.exe" -version >/dev/null 2>&1; then
-    if "$src/ffmpeg.exe" -hide_banner -buildconf 2>&1 | grep -q -- '--enable-gpl'; then
-      echo "error: build reports --enable-gpl; refusing (ClipSmith is LGPL-only)" >&2
+    if ! "$src/ffmpeg.exe" -hide_banner -buildconf 2>&1 | grep -q -- '--enable-libx264'; then
+      echo "error: build lacks --enable-libx264; refusing (ClipSmith re-encodes H.264)" >&2
       return 1
     fi
-    echo "    verified: build has no --enable-gpl"
+    echo "    verified: build includes libx264"
   else
-    echo "    note: cannot exec ffmpeg.exe on this host; skipping GPL self-check"
+    echo "    note: cannot exec ffmpeg.exe on this host; skipping libx264 self-check"
   fi
 
   cp "$src/ffmpeg.exe"  "$BIN_DIR/ffmpeg-$WIN_TRIPLE.exe"

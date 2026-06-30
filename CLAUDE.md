@@ -2,22 +2,23 @@
 
 ## Project
 
-ClipSmith is a standalone desktop app for Mac and Windows that cuts a short clip out of a full-length video file — keeping the audio and every other stream intact. The user opens a local video, scrubs a timeline to pick start and end points, and exports a trimmed clip to disk.
+ClipSmith is a standalone desktop app for Mac and Windows that cuts a short clip out of a full-length video file, with an optional crop. The user opens a local video, scrubs a timeline to pick start and end points, optionally crops the frame, and exports a trimmed clip to disk.
 
-Simple mode (v1) is **lossless**: it stream-copies the selected range with no re-encoding, so the output is bit-identical to the source and the export is near-instant. An **advanced mode** (future) will add frame-accurate cutting, format conversion, and eventually CapCut-level editing — all open source.
+The cut is **frame-accurate**: ClipSmith re-encodes the selected range with H.264 (`libx264`), so the IN and OUT points land exactly where the user puts them — no keyframe snapping. An optional **crop** is applied in the same encode pass. Future work may add export-quality presets, hardware encoders, multiple clips/concatenation, and more.
 
-ClipSmith shares its design language and engineering conventions with its sibling app GifSmith — same minimal native aesthetic, same Tauri + SolidJS + LGPL-FFmpeg stack — but it is a fully independent project and codebase. This document is self-contained; everything needed to build ClipSmith from an empty folder is described here.
+> **History:** ClipSmith v1 was *lossless* — it stream-copied (`ffmpeg -c copy`) and snapped the IN handle to keyframes, which kept it MIT/LGPL-clean but left dead zones between keyframes that couldn't be trimmed through, and made crop impossible. It was deliberately switched to a `libx264` re-encode to get frame-accurate cuts and crop. That re-encode pulls in GPL `libx264`, which relicensed the app to **GPL-3.0**. Parts of the build plan below still describe the old lossless design; treat the sections above it as the current source of truth.
+
+ClipSmith shares its design language and engineering conventions with its sibling app GifSmith — same minimal native aesthetic, same Tauri + SolidJS + FFmpeg stack — but it is a fully independent project and codebase. This document is self-contained; everything needed to build ClipSmith from an empty folder is described here.
 
 ### Hard constraints
 
 - No media library, no cache, no telemetry, no ads, no accounts.
 - Source video is read in place from disk, never copied or imported into the app.
-- **Simple mode never re-encodes.** It only stream-copies (`ffmpeg -c copy`). No video encoder is invoked, so no encoder license (e.g. GPL libx264) is ever touched. This is what keeps the app LGPL-clean.
 - Zero intermediate files. The only file written is the final clip at the user's chosen path.
-- **Output container matches the source container** (`.mp4`→`.mp4`, `.mkv`→`.mkv`, …). This guarantees `-c copy` always succeeds, since every source stream is by definition valid in its own container.
-- No in-app preview/re-export loop. A lossless cut equals what the player already shows looping between the handles, so the player *is* the preview.
+- **Export re-encodes to H.264/AAC `.mp4`** (`libx264`, CRF 18, `preset medium`). The output is always `.mp4` regardless of source container, since H.264 doesn't fit every container (e.g. `.webm`) and a crop rewrites the pixels anyway. The first video stream and all audio are kept; subtitles/attachments are dropped (they can't always be carried into mp4 — e.g. bitmap subs — and keeping them would make the export fail on those sources).
+- The player doubles as the preview (looping between the handles). The export re-encodes, so the clip is near-source quality (visually near-lossless at CRF 18), not bit-identical.
 - Single codebase, cross-platform via Tauri.
-- MIT licensed.
+- **GPL-3.0 licensed** (forced by bundling `libx264`).
 
 ## Stack (locked)
 
@@ -26,51 +27,33 @@ ClipSmith shares its design language and engineering conventions with its siblin
 | Shell | Tauri 2.x | Native binary, ~10MB, system webview |
 | Frontend | SolidJS + TypeScript + Vite | Fine-grained reactivity, ideal for 60fps timeline scrubbing |
 | Styling | Plain CSS with custom properties | Light/dark via `prefers-color-scheme`, no framework overhead |
-| Video probe + cut | Bundled FFmpeg (LGPL) as Tauri sidecar | Universal format support. Used for metadata, keyframe listing, and the cut itself. The cut is just an `ffmpeg -c copy` subprocess — no in-process media crate. |
+| Video probe + cut | Bundled FFmpeg (GPL, with `libx264`) as Tauri sidecar | Universal format support. Used for metadata, timeline thumbnails, and the cut itself. The cut is an `ffmpeg` re-encode subprocess — no in-process media crate. |
 | Build/release | GitHub Actions + `tauri-action` | Auto-builds `.dmg` and `.msi` on tag push |
 
-There is **no `gifski` and no encoder crate**. ClipSmith's entire "encoder" is a single FFmpeg stream-copy call.
+There is **no `gifski` and no encoder crate**. ClipSmith's "encoder" is a single FFmpeg `libx264` subprocess.
 
 ## Pipeline
 
-There is no frame streaming and no in-process encoding. Cutting is one FFmpeg subprocess that copies packets straight through.
+There is no frame streaming and no in-process encoding. Cutting is one FFmpeg subprocess that decodes the selected range and re-encodes it to H.264.
 
-### 1. Keyframe discovery (on load)
-
-After `probe_video`, fetch the video stream's keyframe timestamps. Read packet flags (no decode — fast):
+### The cut
 
 ```
-ffprobe -v error -select_streams v:0 \
-  -show_entries packet=pts_time,flags -of json {path}
+ffmpeg -ss {in} -i {path} -t {out - in} \
+  -map 0:v:0 -map 0:a? [-vf crop=W:H:X:Y] \
+  -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 192k -movflags +faststart \
+  -avoid_negative_ts make_zero -y {output}.mp4
 ```
 
-Keep packets whose `flags` contain `K`; collect their `pts_time` into a sorted `Vec<f64>`. The first frame is always a keyframe (`0.0`).
+- `-ss` **before** `-i` → fast input seek. When re-encoding (since ffmpeg 2.1) this is *also* frame-accurate: it seeks to the preceding keyframe, then decodes/discards up to `{in}`, so the cut starts on the exact requested frame. No keyframe snapping is needed or done.
+- `-t {duration}` rather than `-to {time}` → avoids the `-ss`/`-to` offset ambiguity.
+- `-map 0:v:0 -map 0:a?` → keep the first video and all audio; drop subtitles/attachments (they can't always go into mp4, e.g. bitmap subs, and keeping them would fail the export on those sources).
+- `-vf crop=W:H:X:Y` → present only when a crop is set; W/H/X/Y are even source-pixel values (libx264 + yuv420p needs even dimensions).
+- `-c:v libx264 -crf 18 -preset medium` → visually near-lossless re-encode.
+- `{output}` is always `.mp4`.
 
-### 2. IN-point snapping
-
-The IN handle is **magnetic**: it snaps to the nearest keyframe at or before the requested time.
-
-```
-snap_in = max{ kf in keyframes : kf <= requested_in }   // fallback 0.0
-```
-
-This is rendered in the UI — keyframe positions show as subtle ticks on the timeline and the IN handle clicks onto them — so the snapping reads as intentional, not buggy. The OUT handle is **free** (no snapping): with `-c copy` only the start must land on a keyframe to avoid corruption; the muxer simply stops copying near the OUT point.
-
-### 3. The cut
-
-```
-ffmpeg -ss {snap_in} -i {path} -t {out - snap_in} \
-  -map 0 -c copy -avoid_negative_ts make_zero {output}
-```
-
-- `-ss` **before** `-i` → fast input seek that lands on the keyframe.
-- `-t {duration}` rather than `-to {time}` → avoids the well-known `-ss`/`-to` offset ambiguity.
-- `-map 0` → copy every stream (video, audio, subtitles, attachments).
-- `-c copy` → no re-encode, no quality loss, no encoder license.
-- `-avoid_negative_ts make_zero` → normalize timestamps so the clip starts cleanly at 0.
-- `{output}` extension == source extension.
-
-For short clips this completes in well under a second. Progress is effectively a spinner; for long copies, parse `time=` from FFmpeg stderr if a real bar is wanted later.
+This is implemented in `cutter.rs`, which spawns the sidecar, parses `time=` from FFmpeg stderr, and emits `export-progress` events (`0.0`-`1.0`) the frontend renders as a progress bar. `keyframes.rs` / `list_keyframes` still exist (keyframe listing) but are no longer used for snapping.
 
 ## Project structure
 
@@ -78,7 +61,7 @@ For short clips this completes in well under a second. Progress is effectively a
 clipsmith/
 ├── CLAUDE.md
 ├── README.md
-├── LICENSE                       # MIT
+├── LICENSE                       # GPL-3.0
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
@@ -91,9 +74,10 @@ clipsmith/
 │   ├── styles.css                # CSS variables, theme tokens
 │   └── components/
 │       ├── DropZone.tsx
-│       ├── VideoPlayer.tsx       # keeps audio — do NOT mute
-│       ├── Timeline.tsx          # IN/OUT handles + keyframe ticks; IN snaps, OUT free
-│       └── ExportPanel.tsx       # minimal: clip duration, output name, format (read-only), Export
+│       ├── VideoPlayer.tsx       # keeps audio — do NOT mute; hosts the crop overlay
+│       ├── CropOverlay.tsx       # draggable/resizable crop rect over the stage
+│       ├── Timeline.tsx          # IN/OUT handles, both free and frame-accurate
+│       └── ExportPanel.tsx       # clip duration, format (MP4), crop, progress bar, Export
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
@@ -106,16 +90,16 @@ clipsmith/
 │       ├── main.rs
 │       ├── commands.rs           # probe_video, list_keyframes, export_clip
 │       ├── probe.rs              # ffprobe JSON parse → VideoMeta
-│       ├── keyframes.rs          # ffprobe packet flags → Vec<f64>
-│       └── cutter.rs             # ffmpeg -c copy subprocess
+│       ├── keyframes.rs          # ffprobe packet flags → Vec<f64> (legacy; unused for snapping)
+│       └── cutter.rs             # ffmpeg libx264 re-encode subprocess (+ crop, + progress)
 ├── scripts/
-│   ├── fetch-ffmpeg.sh           # Windows: download LGPL FFmpeg + ffprobe; on a Mac, delegates to build-ffmpeg-macos.sh
-│   └── build-ffmpeg-macos.sh     # compiles LGPL FFmpeg + ffprobe from source for the host macOS arch
+│   ├── fetch-ffmpeg.sh           # Windows: download GPL FFmpeg + ffprobe (libx264); on a Mac, delegates to build-ffmpeg-macos.sh
+│   └── build-ffmpeg-macos.sh     # compiles GPL FFmpeg + static libx264 from source for the host macOS arch
 └── .github/workflows/
     └── release.yml               # tauri-action, builds on tag
 ```
 
-There is no `encoder.rs`, no `CropOverlay.tsx`, no `PreviewModal.tsx`. Simple mode has no encode settings and no separate preview step, so `ExportPanel` is small.
+There is no `encoder.rs` and no `PreviewModal.tsx`: the encode is a single `cutter.rs` FFmpeg subprocess, and the player doubles as the preview. `CropOverlay.tsx` hosts the crop rectangle.
 
 ## Commands
 
@@ -203,14 +187,12 @@ Built from scratch in an empty folder. Each step ends with something runnable. C
 13. **Release workflow.** `.github/workflows/release.yml` using `tauri-apps/tauri-action`. Builds on git tag push (`v*`) across a matrix (macos-14/aarch64, macos-13/x86_64, windows-latest), creates a draft GitHub Release with `.dmg` and `.msi` attached. Windows fetches the prebuilt LGPL sidecars; macOS runners compile them from source (`build-ffmpeg-macos.sh`, with `brew install nasm`) before the bundle step.
 14. **README + screenshots.** Document the lossless / keyframe-snapping behavior prominently so the start-point snapping is understood as a feature, not a bug.
 
-## Advanced mode (future roadmap)
+## Roadmap
 
-Simple mode deliberately ships first. Advanced mode is where ClipSmith grows toward an open-source CapCut. The likely order:
+ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting** and **crop** are now shipped (the libx264 re-encode crossed the GPL "licensing gate" that this section once described as a future decision). Likely next steps:
 
-1. **Frame-accurate cutting (re-encode).** Decode and re-encode the selected range for exact IN/OUT. **This is the licensing gate:** the standard H.264 encoder (libx264) is GPL and would force ClipSmith to GPL. Options to keep it permissive: hardware encoders (`h264_videotoolbox` on macOS, `h264_nvenc`/`h264_qsv`/`h264_amf` on Windows), which ship in LGPL FFmpeg but vary by hardware. Decide before building this.
-2. **Smart cut.** Re-encode only the head GOP (from IN to the next keyframe), stream-copy the remainder. Frame-accurate start at near-lossless speed/quality.
-3. **Format conversion / export presets.** Target container and codec choices (subject to the same encoder-license decision).
+1. **Export-quality presets.** Expose CRF / resolution / preset choices instead of the fixed CRF 18 / `preset medium`. Possibly a faster "draft" vs. "high quality" toggle.
+2. **Hardware encoders.** Offer `h264_videotoolbox` (macOS) / `h264_nvenc`/`h264_qsv`/`h264_amf` (Windows) for much faster encodes where available, falling back to libx264.
+3. **Optional lossless fast-path.** Re-add the old `-c copy` stream-copy as an opt-in for un-cropped, keyframe-aligned cuts where instant + bit-identical matters. (The copy logic is easy to restore; see git history before the re-encode switch.)
 4. **Audio extraction**, mute, volume, channel selection.
-5. **Multiple clips + concatenation**, then **crop**, **filters**, **transitions**, and a multi-track timeline.
-
-Keep simple mode pristine and lossless regardless of how far advanced mode goes — it's the whole point of ClipSmith's identity.
+5. **Multiple clips + concatenation**, then **filters**, **transitions**, and a multi-track timeline.

@@ -1,11 +1,10 @@
-import { createEffect, createMemo, For, Show } from "solid-js";
+import { createEffect, Show } from "solid-js";
 import {
   currentTime,
   duration,
   filePath,
   filmstripSrc,
   inPoint,
-  keyframes,
   MIN_CLIP,
   outPoint,
   seekTo,
@@ -14,7 +13,6 @@ import {
   setOutPoint,
   setViewEnd,
   setViewStart,
-  snapIn,
   viewEnd,
   viewStart,
 } from "../state";
@@ -30,8 +28,7 @@ const MAX_THUMBS = 20;
 const MIN_THUMBS = 6;
 
 // Most-zoomed-in state: the window can shrink to this many seconds. Kept small
-// so the free OUT handle (and the magnetic IN handle near sparse keyframes) can
-// be placed precisely for accurate trimming.
+// so both handles can be placed precisely, frame by frame, for accurate trimming.
 const MIN_VIEW_SPAN = 1;
 // Wheel zoom step per notch.
 const ZOOM_FACTOR = 1.2;
@@ -43,9 +40,8 @@ type DragKind = "in" | "out" | "playhead";
 
 // iOS-style trim strip with a zoomable view window. Drag the IN/OUT handles to
 // frame the clip; drag elsewhere to scrub. Scroll to zoom the visible window
-// (cursor-anchored, down to MIN_VIEW_SPAN). The IN handle is magnetic — it snaps
-// to the nearest keyframe at or before it, since `-c copy` must start on a
-// keyframe — while the OUT handle is free. Keyframe positions show as ticks.
+// (cursor-anchored, down to MIN_VIEW_SPAN). Both handles are free and
+// frame-accurate — the export re-encodes, so the cut isn't tied to keyframes.
 export default function Timeline() {
   let track: HTMLDivElement | undefined;
 
@@ -92,30 +88,17 @@ export default function Timeline() {
     return viewStart() + frac * viewSpan();
   }
 
-  // Keyframe ticks visible in the current window. A long clip has hundreds of
-  // keyframes; fully zoomed out, their 1px ticks merge into a solid gray wash
-  // that hides the thumbnails. Only render them once they're sparse enough to
-  // read as individual guides (snapping uses keyframes() directly, so hiding the
-  // ticks costs nothing functionally).
-  const visibleKeyframes = createMemo(() => {
-    const inView = keyframes().filter(
-      (kf) => kf >= viewStart() && kf <= viewEnd(),
-    );
-    const maxTicks = Math.max(40, Math.floor((track?.clientWidth ?? 600) / 8));
-    return inView.length <= maxTicks ? inView : [];
-  });
-
   function startDrag(kind: DragKind, e: PointerEvent) {
     e.preventDefault();
 
     const apply = (clientX: number) => {
       const t = timeFromClientX(clientX);
       if (kind === "in") {
-        // Keep IN strictly before OUT, then snap to a keyframe at or before it.
+        // IN is free and frame-accurate, kept strictly before OUT.
         const limit = Math.max(0, outPoint() - MIN_CLIP);
-        const snapped = snapIn(Math.min(t, limit), keyframes());
-        setInPoint(snapped);
-        seekTo(snapped);
+        const next = clamp(t, 0, limit);
+        setInPoint(next);
+        seekTo(next);
       } else if (kind === "out") {
         const lo = inPoint() + MIN_CLIP;
         setOutPoint(clamp(t, lo, duration()));
@@ -187,11 +170,6 @@ export default function Timeline() {
               style={{ left: `${stripLeft()}%`, width: `${stripWidth()}%` }}
             />
           </Show>
-          <For each={visibleKeyframes()}>
-            {(kf) => (
-              <div class="tl-tick" style={{ left: `${pct(kf)}%` }} />
-            )}
-          </For>
           <div class="tl-dim tl-dim-left" />
           <div class="tl-dim tl-dim-right" />
           <div class="tl-selection" />

@@ -84,12 +84,13 @@ pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f
     keyframes::parse_keyframes(&json).map_err(|e| e.to_string())
 }
 
-/// Export the selected range as a lossless clip via `ffmpeg -c copy`.
+/// Export the selected range as a frame-accurate H.264/AAC mp4 via a libx264
+/// re-encode, optionally cropped.
 ///
-/// `start` is the keyframe-snapped IN time and `duration` is `out - start`.
-/// `output`'s extension must equal `input`'s so the stream copy always muxes
-/// back into a compatible container. The source is read in place and never
-/// modified; the only file written is `output`.
+/// `start` is the (free, frame-accurate) IN time and `duration` is `out - start`.
+/// `crop`, when present, is a rectangle in source pixels. The output is always
+/// mp4 regardless of source container. The source is read in place and never
+/// modified; the only file written is `output`. Emits `export-progress` events.
 #[tauri::command]
 pub async fn export_clip(
     app: tauri::AppHandle,
@@ -97,8 +98,9 @@ pub async fn export_clip(
     output: String,
     start: f64,
     duration: f64,
+    crop: Option<cutter::Crop>,
 ) -> Result<(), String> {
-    cutter::cut(&app, &input, &output, start, duration).await
+    cutter::cut(&app, &input, &output, start, duration, crop).await
 }
 
 /// Resolve ClipSmith's default exports folder. Does not create it: callers that
