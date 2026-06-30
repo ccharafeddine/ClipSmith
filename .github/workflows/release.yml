@@ -54,6 +54,12 @@ jobs:
           brew install nasm
           bash scripts/build-ffmpeg-macos.sh
 
+      # yt-dlp sidecar (URL import) is in externalBin too, so the bundle step
+      # fails without it. The script picks the right binary per host triple.
+      - name: Fetch yt-dlp sidecar
+        shell: bash
+        run: bash scripts/fetch-ytdlp.sh
+
       - name: Build and publish draft release
         uses: tauri-apps/tauri-action@v0
         env:
