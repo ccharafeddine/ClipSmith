@@ -1,6 +1,7 @@
 import { onCleanup, onMount, Show } from "solid-js";
 import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
+import ReframePanel from "./components/ReframePanel";
 import ExportPanel from "./components/ExportPanel";
 import Logo from "./components/Logo";
 import {
@@ -10,6 +11,7 @@ import {
   meta,
   setInAtPlayhead,
   setOutAtPlayhead,
+  stageAspect,
   stepFrame,
   togglePlay,
 } from "./state";
@@ -68,8 +70,6 @@ function App() {
         <Logo />
       </header>
 
-      <DropZone />
-
       <Show when={loadError()}>
         <p class="error">{loadError()}</p>
       </Show>
@@ -77,34 +77,37 @@ function App() {
       <Show
         when={meta()}
         fallback={
-          <div class="empty-state">Open a video to start trimming.</div>
+          <div class="empty-state">
+            <DropZone />
+          </div>
         }
       >
         {(m) => (
-          <div
-            class="editor-single"
-            style={{ "--aspect": `${m().width}/${m().height}` }}
-          >
-            <p class="meta-line">
-              <span class="meta-text">
-                <span class="filename">{fileName()}</span>
-                {"  "}
+          <div class="editor" style={{ "--aspect": `${stageAspect()}` }}>
+            <VideoPlayer />
+            <aside class="editor-side">
+              <div class="meta-line">
+                <span class="filename" title={fileName()}>
+                  {fileName()}
+                </span>
+                <button
+                  type="button"
+                  class="close-video"
+                  title="Remove video"
+                  aria-label="Remove video"
+                  onClick={closeVideo}
+                >
+                  &times;
+                </button>
+              </div>
+              <p class="meta-detail">
                 {formatDuration(m().duration_secs)} &middot; {m().width}&times;
                 {m().height} &middot; {(m().fps_num / m().fps_den).toFixed(2)} fps
                 &middot; {m().codec} &middot; {m().container}
-              </span>
-              <button
-                type="button"
-                class="close-video"
-                title="Remove video"
-                aria-label="Remove video"
-                onClick={closeVideo}
-              >
-                &times;
-              </button>
-            </p>
-            <VideoPlayer />
-            <ExportPanel />
+              </p>
+              <ReframePanel />
+              <ExportPanel />
+            </aside>
           </div>
         )}
       </Show>

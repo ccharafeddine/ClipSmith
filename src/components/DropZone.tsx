@@ -64,28 +64,34 @@ export default function DropZone() {
 
   const busy = () => loading() || downloading();
 
+  const acceptedHint = `Accepted: ${ALLOWED_EXTENSIONS.join(", ").toUpperCase()}`;
+
   return (
     <div class="loader">
-      <button class="dropzone" onClick={pick} disabled={busy()}>
-        <span class="dropzone-title">
-          {loading() ? "Loading…" : "Choose a video"}
-        </span>
-        <span class="dropzone-hint">{ALLOWED_EXTENSIONS.join(", ")}</span>
-      </button>
-
-      <form class="url-row" onSubmit={loadFromUrl}>
-        <input
-          type="text"
-          class="url-input"
-          placeholder="or paste a video URL (YouTube, etc.)"
-          value={url()}
-          onInput={(e) => setUrl(e.currentTarget.value)}
+      <div class="loader-row">
+        <button
+          class="upload-btn"
+          onClick={pick}
           disabled={busy()}
-        />
-        <button type="submit" disabled={busy() || !url().trim()}>
-          {downloading() ? "Downloading…" : "Load"}
+          title={acceptedHint}
+        >
+          {loading() ? "Loading…" : "Upload"}
         </button>
-      </form>
+
+        <form class="url-row" onSubmit={loadFromUrl}>
+          <input
+            type="text"
+            class="url-input"
+            placeholder="or paste a video URL (YouTube, etc.)"
+            value={url()}
+            onInput={(e) => setUrl(e.currentTarget.value)}
+            disabled={busy()}
+          />
+          <button type="submit" disabled={busy() || !url().trim()}>
+            {downloading() ? "Downloading…" : "Load"}
+          </button>
+        </form>
+      </div>
 
       <Show when={downloading()}>
         <div class="dl-progress-row">

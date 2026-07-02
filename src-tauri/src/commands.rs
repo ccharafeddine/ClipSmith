@@ -10,7 +10,9 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 use crate::cutter;
+use crate::encoders::{self, VideoEncoder};
 use crate::filmstrip;
+use crate::formats::{self, OutputFormat};
 use crate::keyframes;
 use crate::probe::{self, VideoMeta};
 
@@ -85,12 +87,26 @@ pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f
 }
 
 /// Export the selected range as a frame-accurate H.264/AAC mp4 via a libx264
-/// re-encode, optionally cropped.
+/// re-encode, optionally reframed into a chosen output canvas.
 ///
-/// `start` is the (free, frame-accurate) IN time and `duration` is `out - start`.
-/// `crop`, when present, is a rectangle in source pixels. The output is always
-/// mp4 regardless of source container. The source is read in place and never
-/// modified; the only file written is `output`. Emits `export-progress` events.
+/// Encode options for [`export_clip`], grouped so the command stays within a
+/// sane argument count. `reframe` reshapes the frame (blur-fill / pad /
+/// crop-to-fill; see [`cutter::Reframe`]); `format` is the output
+/// container/codecs id (`mp4`/`mov`/`mkv`/`webm`); `use_hardware` picks a
+/// detected hardware encoder for the H.264 formats (ignored for WebM).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportOptions {
+    #[serde(default)]
+    pub reframe: Option<cutter::Reframe>,
+    pub format: String,
+    pub use_hardware: bool,
+}
+
+/// Export the range `[start, start + duration)` of `input` to `output`. `start`
+/// is the (free, frame-accurate) IN time and `duration` is `out - start`; see
+/// [`ExportOptions`] for the encode settings. The source is read in place and
+/// never modified; the only file written is `output`. Emits `export-progress`.
 #[tauri::command]
 pub async fn export_clip(
     app: tauri::AppHandle,
@@ -98,9 +114,38 @@ pub async fn export_clip(
     output: String,
     start: f64,
     duration: f64,
-    crop: Option<cutter::Crop>,
+    options: ExportOptions,
 ) -> Result<(), String> {
-    cutter::cut(&app, &input, &output, start, duration, crop).await
+    let fmt = OutputFormat::from_id(&options.format).unwrap_or(OutputFormat::Mp4);
+    // Hardware encoding only applies to the H.264 formats; WebM is always VP9.
+    let encoder = if fmt.uses_h264() && options.use_hardware {
+        encoders::detect_cached(&app).await
+    } else {
+        VideoEncoder::X264
+    };
+    let encoding = cutter::Encoding { format: fmt, encoder };
+    cutter::cut(&app, &input, &output, start, duration, options.reframe, encoding).await
+}
+
+/// The output formats the bundled ffmpeg can produce, as their ids
+/// (`["mp4","mov","mkv"]`, plus `"webm"` when VP9/Opus is available). Detected
+/// once and cached for the session. The frontend renders a chip per id.
+#[tauri::command]
+pub async fn available_formats(app: tauri::AppHandle) -> Vec<String> {
+    formats::available_cached(&app)
+        .await
+        .iter()
+        .map(|f| f.id().to_string())
+        .collect()
+}
+
+/// The best available H.264 encoder's user-facing name (detecting once and
+/// caching for the session). The frontend shows this so the user knows whether
+/// hardware acceleration is active. Detection never fails — it falls back to
+/// libx264 — so this always returns a name.
+#[tauri::command]
+pub async fn detect_encoder(app: tauri::AppHandle) -> String {
+    encoders::detect_cached(&app).await.display_name().to_string()
 }
 
 /// Resolve ClipSmith's default exports folder. Does not create it: callers that

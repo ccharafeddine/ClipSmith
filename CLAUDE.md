@@ -10,12 +10,14 @@ The cut is **frame-accurate**: ClipSmith re-encodes the selected range with H.26
 
 ClipSmith shares its design language and engineering conventions with its sibling app GifSmith — same minimal native aesthetic, same Tauri + SolidJS + FFmpeg stack — but it is a fully independent project and codebase. This document is self-contained; everything needed to build ClipSmith from an empty folder is described here.
 
+> **v2 is in progress — see [## v2: Reframe](#v2-reframe) below.** The "optional crop" described in this Project section is being generalized into **Reframe**: the target ratio becomes an output *canvas*, and the user chooses how the source fills it (blur-fill / pad / crop-to-fill). The old crop lives on as the manual mode of crop-to-fill and as the "Freeform" canvas. Where this section and the v2 section disagree, **the v2 section wins** for the parts marked shipped there.
+
 ### Hard constraints
 
 - No media library, no cache, no telemetry, no ads, no accounts.
 - Source video is read in place from disk, never copied or imported into the app.
 - Zero intermediate files. The only file written is the final clip at the user's chosen path.
-- **Export re-encodes to H.264/AAC `.mp4`** (`libx264`, CRF 18, `preset medium`). The output is always `.mp4` regardless of source container, since H.264 doesn't fit every container (e.g. `.webm`) and a crop rewrites the pixels anyway. The first video stream and all audio are kept; subtitles/attachments are dropped (they can't always be carried into mp4 — e.g. bitmap subs — and keeping them would make the export fail on those sources).
+- **Export re-encodes; MP4 (H.264/AAC) is the default.** v2 adds an output **format** picker (see [## v2: Reframe](#v2-reframe) → *Output formats*): MP4/MOV/MKV (H.264/AAC) and WebM (VP9/Opus), so ClipSmith doubles as a container/codec converter. The first video stream and all audio are kept; subtitles/attachments are dropped (they can't always be carried into these containers — e.g. bitmap subs — and keeping them would make the export fail on those sources). *(v1 always wrote `.mp4`; that constraint is intentionally relaxed by the v2 format picker.)*
 - The player doubles as the preview (looping between the handles). The export re-encodes, so the clip is near-source quality (visually near-lossless at CRF 18), not bit-identical.
 - Single codebase, cross-platform via Tauri.
 - **GPL-3.0 licensed** (forced by bundling `libx264`).
@@ -99,7 +101,7 @@ clipsmith/
     └── release.yml               # tauri-action, builds on tag
 ```
 
-There is no `encoder.rs` and no `PreviewModal.tsx`: the encode is a single `cutter.rs` FFmpeg subprocess, and the player doubles as the preview. `CropOverlay.tsx` hosts the crop rectangle.
+There is no `PreviewModal.tsx`: the player doubles as the preview. `CropOverlay.tsx` hosts the crop rectangle. (v2 adds `encoders.rs` — hardware-encoder detection — but the encode is still a single `cutter.rs` FFmpeg subprocess; `encoders.rs` only chooses its `-c:v` flags. See [## v2: Reframe](#v2-reframe).)
 
 ## Commands
 
@@ -196,3 +198,64 @@ ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting** and **c
 3. **Optional lossless fast-path.** Re-add the old `-c copy` stream-copy as an opt-in for un-cropped, keyframe-aligned cuts where instant + bit-identical matters. (The copy logic is easy to restore; see git history before the re-encode switch.)
 4. **Audio extraction**, mute, volume, channel selection.
 5. **Multiple clips + concatenation**, then **filters**, **transitions**, and a multi-track timeline.
+
+## v2: Reframe
+
+**Reframe** generalizes v1's destructive crop. The target ratio becomes an output **canvas**, and the user picks how the source fills it. This is now the *primary aspect control* — there is deliberately **one** ratio picker, not a crop feature competing with an aspect feature. Everything still runs through the same single `cutter.rs` libx264 re-encode pass; reframe only builds a smarter filtergraph. All v1 constraints hold (local-first, no telemetry/accounts, source read in place, zero persistent intermediate files, GPL-3.0).
+
+### The model
+
+- **Canvas** — an output ratio: `9:16`, `1:1`, `4:5`, `16:9`, plus `original` (source ratio) and `freeform`. Canvas pixel dimensions are computed **on the frontend** (`src/reframe.ts` `canvasDims`) as the single source of truth, so the live preview and the export always agree, and passed to the backend as even integers. Rule: lock to source height, fall back to width-locked if that would overflow — the canvas never upscales beyond the source's bounding box.
+- **Fill strategy** — how the source fills the canvas:
+  - **Blur-fill** — fit the whole frame inside the canvas; fill the leftover bars with a blurred, zoomed copy of the same video. Nothing is lost. FFmpeg: `split` → bg branch `scale …:force_original_aspect_ratio=increase, crop, gblur` → fg branch `scale …:force_original_aspect_ratio=decrease` → `overlay`. Complex graph → `-filter_complex`, output mapped `[v]`.
+  - **Pad** — same fit, but solid-color bars (user color, default black): `scale …:decrease, pad=W:H:x:y:color`. Simple `-vf`.
+  - **Crop-to-fill** — scale up and crop to the canvas (loses edges). Two sub-modes: **manual** (repurposed crop rectangle, AR-locked to the canvas) and **auto/subject-aware** (Tier 2). `crop, scale`.
+- **Position (anchor)** — where the fitted source / kept region sits along the bar axis: top/center/bottom for a portrait canvas, left/center/right for a landscape one. Applied as an ffmpeg offset expression so it's a no-op on the axis without bars.
+- **Freeform** is the free-crop escape hatch (design decision, confirmed with the user): an *unconstrained* crop whose output dimensions are the rectangle itself. Because the canvas equals the crop's own size, `cutter.rs` emits the bare `crop=w:h:x:y` — **byte-identical to v1's crop**, so v1 behavior is preserved, not merely approximated.
+- **Identity:** `original` with no crop sends `reframe = null`, which takes the exact v1 no-filter frame-accurate path.
+
+### Filtergraphs (`cutter.rs`)
+
+`export_clip` now takes `Option<cutter::Reframe>` instead of `Option<Crop>`. `Reframe { canvas_w, canvas_h, strategy, anchor, pad_color, crop }` (serde `camelCase`) → `Reframe::to_filter()` → one of:
+
+```
+None      -> (no -vf)                        # identity, v1 cut
+Simple(s) -> -vf {s}            + -map 0:v:0  # pad, crop, freeform
+Complex(g)-> -filter_complex {g}+ -map [v]    # blur-fill
+```
+
+The blur graph: `[0:v]split=2[bg][fg]; [bg]scale=W:H:force_original_aspect_ratio=increase,crop=W:H,gblur=sigma=σ[bgb]; [fg]scale=W:H:force_original_aspect_ratio=decrease[fgs]; [bgb][fgs]overlay=x:y,setsar=1[v]` (σ scales with the canvas, clamped 10–40). Audio (`-map 0:a?`), frame-accurate `-ss`/`-t`, CRF 18, `+faststart`, and `time=` progress parsing are unchanged from v1.
+
+### Frontend
+
+- `src/reframe.ts` — pure helpers + shared types (`CanvasRatio`, `FillStrategy`, `Anchor`, `Reframe`); `canvasDims`, `canvasAspect`, `barsAxis`, `anchorObjectPosition`.
+- `state.ts` — signals `reframeRatio`, `fillStrategy`, `reframeAnchor`, `padColor`; `chooseRatio()` (Freeform seeds + shows the crop overlay, presets clear it), `stageAspect()` (reshapes the preview), `buildReframe()` (`null` == identity).
+- `components/ReframePanel.tsx` — the single aspect control: canvas chips, fill toggle, bar-color well, position. Replaces the old standalone Crop button.
+- `components/VideoPlayer.tsx` — the stage **is** the live preview: it takes the canvas aspect, the foreground `<video>` is `contain`-fitted + anchored, and blur-fill adds a second muted, blurred backdrop `<video>` synced off the main element. Pad shows a solid backdrop. CSS-only mirror of the filtergraph; the export is unaffected.
+- `CropOverlay.tsx` is still the crop rectangle, now reached via the `freeform` canvas (Step 2 will AR-lock it for manual crop-to-fill).
+
+### Build milestones
+
+Built in two milestones; **stop after Tier 1 for live testing** before Tier 2.
+
+**Tier 1 — deterministic reframe.** Canvas presets, the three fill strategies, positioning, live preview, and hardware-encoder support. Sub-steps:
+1. **(shipped)** Reframe model + `ReframePanel` + blur-fill + pad + live preview + Freeform crop (== v1). Backend `Reframe` filtergraph. Verified: `cargo test` (22, incl. 7 reframe), `cargo clippy -D warnings`, `tsc --noEmit`, `npm run build`. Needs live-window testing (see `progress.txt`).
+2. **(shipped)** Manual crop-to-fill: "Crop" added to the preset fill toggle; `CropOverlay` AR-locked to the canvas (`cropAspectLock()` + aspect-locked corner resize); `buildReframe()` sends the rect so the backend does `crop,scale`. The editing view shows the **full source frame with the aspect-locked box** (not a canvas-shaped cover), so you can see what's cropped out; `stageAspect()` returns the source aspect while `cropMode()`. Frontend-only — the `crop,scale` backend path shipped in Step 1. Verified: `tsc --noEmit`, `npm run build`.
+3. **(shipped)** Hardware encoders (folds in roadmap item 2). New `encoders.rs`: `VideoEncoder` enum + per-encoder quality flags, a **test-encode probe** (5 frames of `testsrc` → null with the real flags — because being *listed* in the build ≠ *usable*: nvenc needs an NVIDIA GPU, etc.), `detect()` → first working candidate else `X264`, cached per session in a Tauri-managed `tokio::OnceCell` ([`EncoderCache`]). Priority: macOS `h264_videotoolbox`; Windows `h264_nvenc` → `h264_qsv` → `h264_amf`. `cutter::cut` takes a `VideoEncoder`; `export_clip` gains `use_hardware`; `detect_encoder` returns the display name. UI: Auto/Software toggle in the export panel + the resolved encoder name. Any probe failure cascades to **libx264**, so correctness is guaranteed and only speed varies. HW quality knobs (`-q:v` / `-cq` / `-global_quality` / `-qp`) target CRF-18-equivalent and are flagged for live/CI tuning. Verified: `cargo test` (24), `cargo clippy -D warnings`, `tsc`, `npm run build`.
+
+### Output formats (converter)
+
+ClipSmith exports **MP4 by default** but can write **MOV**, **MKV**, or **WebM** — a built-in container/codec converter. Because the trim and reframe filtergraph are codec-agnostic (they hand off `yuv420p`), a format only changes the tail of the ffmpeg command: video codec, audio codec, and muxer. `formats.rs` owns this:
+
+- **MP4 / MOV / MKV → H.264 + AAC.** These reuse the whole pipeline, including the `VideoEncoder` choice (libx264 or a detected hardware encoder). `+faststart` for mp4/mov only. Always available (libx264 ships).
+- **WebM → VP9 + Opus.** A different codec path: hardware H.264 doesn't apply (VP9 is software `libvpx-vp9`, CRF 31), audio is Opus. It needs `libvpx`/`libopus` in the bundled ffmpeg, which the from-source macOS build may lack, so WebM is **runtime-probed** (a VP9+Opus test-encode via `formats::available_cached`, cached in a Tauri `OnceCell`) and only offered when it actually encodes. The Windows BtbN build has them; to enable WebM on macOS add `--enable-libvpx --enable-libopus` to `scripts/build-ffmpeg-macos.sh`.
+
+`OutputFormat::encode_args(encoder, output)` builds the video+audio+container+muxer+output tail; `cutter::cut` takes a `cutter::Encoding { format, encoder }`. `export_clip` takes a grouped `ExportOptions { reframe, format, useHardware }` (keeps the command under clippy's 7-arg limit) and only detects a hardware encoder for H.264 formats. Frontend: `src/formats.ts` (display metadata), `outputFormat` + `availableFormatIds` signals, a **Format** field of chips in the export panel (with a codec hint), and the Encoder field shown only for H.264 formats. The save dialog defaults to the chosen extension. **(shipped)**
+
+**Tier 2 — subject-aware crop-to-fill.** The first feature that must *understand* the video, so treat it like CaptionSmith's whisper integration, not a filter. Bundled local face detector via ONNX Runtime (`ort`, MIT) — **not** Ultralytics YOLO (AGPL). Two-phase like transcription: a cancellable **analyze** pass samples frames, runs detection, and builds a temporally-smoothed (low-pass/eased) center-path; the **encode** then drives a time-varying `crop`. Pan smoothly within a shot; **hard-cut** across scene changes (detect cheaply with `select='gt(scene,…)'`); on no detection, hold last position / center (never lurch). Ideally the smoothed path is previewable and nudgeable before committing.
+
+### Conventions specific to v2
+
+- Spawn FFmpeg via the existing `cutter.rs` shell-plugin `.spawn()` streaming path (text stderr → `time=` progress). The `std::process::Command` / `set_raw_out(true)` gotcha (plugins-workspace #3090) only affects **binary** stdout (e.g. `filmstrip.rs` piping a PNG); it does not apply to text-stderr progress, so reframe reuses the working `cutter.rs` pattern rather than a parallel spawn mechanism.
+- Canvas dimensions are computed once in TS and passed to Rust; the backend defensively re-evens them but does not recompute the ratio. Keep this single-source-of-truth split so preview == export.
+- Don't reintroduce a second aspect/crop picker. Crop is a *mode of* reframe.

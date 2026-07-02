@@ -3,6 +3,7 @@
 // in one place.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Reframe } from "./reframe";
 
 export interface VideoMeta {
   duration_secs: number;
@@ -37,23 +38,44 @@ export interface CropRect {
 
 /**
  * Export the range `[start, start + duration)` of `input` to `output` as a
- * frame-accurate H.264/AAC mp4 (libx264 re-encode), optionally cropped. `output`
- * is always `.mp4`. Emits "export-progress" events (0.0-1.0) while running.
+ * frame-accurate H.264/AAC mp4 (libx264 re-encode), optionally reframed into a
+ * chosen output canvas (blur-fill / pad / crop-to-fill). `reframe` of `null`
+ * means an identity export (v1's plain frame-accurate cut). `output` is always
+ * `.mp4`. Emits "export-progress" events (0.0-1.0) while running.
  */
 export function exportClip(
   input: string,
   output: string,
   start: number,
   duration: number,
-  crop: CropRect | null,
+  reframe: Reframe | null,
+  format: string,
+  useHardware: boolean,
 ): Promise<void> {
   return invoke<void>("export_clip", {
     input,
     output,
     start,
     duration,
-    crop: crop ?? undefined,
+    options: { reframe: reframe ?? undefined, format, useHardware },
   });
+}
+
+/**
+ * The output formats the bundled ffmpeg can produce, as ids (`mp4`/`mov`/`mkv`,
+ * plus `webm` when VP9/Opus is available). Detected once and cached backend-side.
+ */
+export function availableFormats(): Promise<string[]> {
+  return invoke<string[]>("available_formats");
+}
+
+/**
+ * The best available H.264 encoder's user-facing name (e.g. "NVIDIA NVENC" or
+ * "Software (libx264)"). Detected once and cached in the backend for the
+ * session; always resolves (falls back to libx264).
+ */
+export function detectEncoder(): Promise<string> {
+  return invoke<string>("detect_encoder");
 }
 
 /**

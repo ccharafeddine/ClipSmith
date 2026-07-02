@@ -1,0 +1,265 @@
+ClipSmith — progress log
+=========================
+
+Format: newest entry on top. Each entry = what I did / what I verified / what
+still needs live-window (npm run tauri dev) testing.
+
+
+2026-07-02 — v2, output format picker (ClipSmith as a converter)
+----------------------------------------------------------------
+User request: keep MP4 default, but let the export write other video file
+types — effectively a built-in container/codec converter. This relaxes the old
+"always mp4" hard constraint (updated in CLAUDE.md).
+
+Design: the trim + reframe filtergraph are codec-agnostic (yuv420p handoff), so
+a format only changes the tail of the ffmpeg command (video codec, audio codec,
+muxer). Two families:
+  - MP4 / MOV / MKV = H.264 + AAC. Reuse the ENTIRE pipeline incl. the hardware/
+    libx264 encoder choice. Always available (libx264 ships).
+  - WebM = VP9 + Opus. Different codec path; hardware H.264 doesn't apply (VP9 is
+    software libvpx-vp9). Needs libvpx/libopus in the bundled ffmpeg, which the
+    from-source macOS build may lack — so WebM is RUNTIME-PROBED (VP9+Opus test
+    encode) and only offered when it actually encodes. Windows BtbN build has it.
+
+DONE
+- src-tauri/src/formats.rs (new): OutputFormat enum (Mp4/Mov/Mkv/Webm),
+  encode_args(encoder, out) building video+audio+container+muxer args (H.264
+  defers to VideoEncoder; WebM = VP9 crf 31 / Opus 128k). probe_webm() test
+  encode + available_cached() via a Tauri-managed OnceCell. faststart only for
+  mp4/mov; forced -f muxer so a renamed output can't confuse detection.
+- cutter.rs: cut() now takes a cutter::Encoding { format, encoder } (bundled to
+  stay under clippy's 7-arg limit); tail built from format.encode_args().
+- commands.rs: export_clip takes a grouped ExportOptions { reframe, format,
+  useHardware }; new available_formats command. HW encoder only detected for
+  H.264 formats.
+- lib.rs: mod formats; manage FormatCache; register available_formats.
+- Frontend: src/formats.ts (display metadata + formatInfo). state: outputFormat
+  (default "mp4") + availableFormatIds signals, refreshFormats() on load, save
+  dialog uses the chosen ext, exportClip passes the format. ipc: exportClip
+  nests options + availableFormats(). ExportPanel: new Format field (chips over
+  available formats + codec hint); Encoder field now shown only for H.264
+  formats (WebM = VP9/Opus, no HW toggle).
+
+VERIFIED
+- cd src-tauri && cargo test --lib -> 28 passed (4 new format tests).
+- cd src-tauri && cargo clippy --all-targets -- -D warnings -> clean.
+- npx tsc --noEmit -> 0. npm run build -> ok. Tauri dev recompiled + relaunched
+  clean.
+
+NEEDS LIVE-WINDOW TESTING
+- Export the same clip as MP4 / MOV / MKV — all play, audio intact, reframe
+  applied; the save dialog defaults to the right extension each time.
+- WebM: on this Windows box it should appear in the Format chips (VP9/Opus
+  probe passes). Export one — expect it to be noticeably slower (VP9 software)
+  but valid; the Encoder toggle is hidden for WebM. Confirm progress bar moves.
+- If WebM ever fails to appear, that's the probe saying the bundled ffmpeg lacks
+  libvpx/libopus (expected on a macOS build until the build script adds them).
+
+
+2026-07-02 — v2 Reframe, layout rework (no-scroll two-column editor)
+-------------------------------------------------------------------
+User feedback after live test: the centered single column forced scrolling on
+tall canvases, and switching canvas ratio made the whole page jump (timeline
+moved). Also wanted the loader collapsed while editing and ? tooltips.
+
+DONE (frontend/CSS only)
+- App.tsx: two-column editor. Left = VideoPlayer (stage + timeline + transport).
+  Right (.editor-side) = filename/close, ReframePanel, ExportPanel. Loader
+  (DropZone) moved into the empty-state fallback, so it's gone while editing.
+- VideoPlayer.tsx: stage wrapped in .stage-wrap (fixed height = --budget) and
+  centered, so changing the canvas ratio only resizes the preview in place — the
+  timeline/transport below no longer move (fixes the "jump").
+- App.css: .container overflow:hidden (page never scrolls). .editor sets
+  --reserved:250px, --budget:calc(100vh - reserved). .stage sizes to
+  width:min(100%, budget*aspect) with aspect-ratio -> largest canvas-shaped box
+  that fits both dims, no JS. .editor-side is 340px, overflow-y:auto (scrolls
+  internally if ever needed). Reframe/export panels no longer use the old
+  aspect-based max-width; they fill the column. Added .info "?" badge.
+- DropZone.tsx: big dropzone -> compact "Upload" button (title tooltip lists
+  accepted filetypes) + URL input & Load on the same row.
+- Tooltips: ? next to Canvas, Fill, Position (ReframePanel) and Encoder
+  (ExportPanel), explaining each; native title attribute.
+
+VERIFIED
+- npx tsc --noEmit -> 0.  npm run build -> ok.  HMR applied cleanly in the
+  running dev window (a transient JSX error was just mid-edit between adding the
+  stage-wrap open/close tags; resolved on the next update).
+
+NEEDS LIVE-WINDOW CONFIRMATION
+- --reserved (250px) is an estimate: confirm nothing scrolls and the preview is
+  as large as possible for both 9:16 and 16:9 without pushing the timeline off
+  screen. Tell me if it scrolls (raise it) or leaves too much dead space (lower).
+- 340px side column: all controls readable / not too cramped.
+
+
+2026-07-02 — v2 Reframe, Tier 1 Step 3 (hardware encoders)
+---------------------------------------------------------
+Goal: use a hardware H.264 encoder when the machine has one — h264_videotoolbox
+(macOS) or h264_nvenc/h264_qsv/h264_amf (Windows) — with a clean libx264
+fallback. Reframe (blur especially) + the Tier 2 analysis pass make software-only
+encoding hurt. Completes Tier 1.
+
+Key decision: detect by TEST-ENCODE, not by `ffmpeg -encoders`. Being listed in
+the build != usable (nvenc listed on every Windows build but needs an NVIDIA
+GPU). We encode 5 frames of testsrc with the exact codec+quality flags to null;
+accept only on exit 0. Any failure cascades to the next candidate, then libx264.
+So correctness is guaranteed — worst case is software. Cannot validate real GPUs
+in this env; the fallback is what makes that safe. HW quality flags flagged for
+live/CI tuning (MAINTAINER NOTE in encoders.rs).
+
+DONE
+- src-tauri/src/encoders.rs (new):
+    * VideoEncoder enum { X264, VideoToolbox, Nvenc, Qsv, Amf }; per-encoder
+      video_args() (codec + constant-quality knob + pix_fmt, tuned ~CRF 18):
+      x264 -crf 18 / videotoolbox -q:v 60 / nvenc -rc vbr -cq 19 / qsv
+      -global_quality 20 (nv12) / amf -rc cqp -qp 20. display_name() for the UI.
+    * platform CANDIDATES (macOS: videotoolbox; Windows: nvenc,qsv,amf).
+    * probe() 5-frame testsrc -> null encode; detect() first working candidate
+      else X264; detect_cached() via a Tauri-managed tokio OnceCell (probe once).
+    * #[allow(dead_code)] on the enum: variants are platform-gated construction.
+- cutter.rs: cut() takes a VideoEncoder; the hardcoded libx264 block replaced by
+  encoder.video_args() (pix_fmt moved into it). Audio/container flags unchanged.
+- commands.rs: export_clip gains use_hardware (resolve encoder or force X264);
+  new detect_encoder command returns the display name.
+- lib.rs: mod encoders; manage EncoderCache; register detect_encoder.
+- Frontend: hwAccel (Auto, default) + encoderLabel signals; refreshEncoder()
+  called on load; exportClip passes hwAccel(); ipc detectEncoder(); ExportPanel
+  gets an Auto/Software chip toggle + the resolved encoder name.
+
+VERIFIED
+- cd src-tauri && cargo test --lib -> 24 passed (2 new encoder-args tests).
+- cd src-tauri && cargo clippy --all-targets -- -D warnings -> clean.
+- npx tsc --noEmit -> 0.  npm run build -> ok.
+
+NEEDS LIVE-WINDOW TESTING (npm run tauri dev) — esp. on real hardware/CI
+- On a real Mac: Auto resolves to "Apple VideoToolbox"; export quality at -q:v 60
+  is comparable to CRF 18 (tune if not). On a real Windows GPU box: Auto resolves
+  to NVENC/QuickSync/AMF as appropriate.
+- No-HW machine (or Software toggle): Auto still exports fine via libx264;
+  detection doesn't stall the first export (probe cost is a few short encodes).
+- Detected label shows in the export panel; Software forces libx264.
+- Re-verify all reframe strategies (blur/pad/crop/freeform) encode correctly on
+  the hardware path, not just libx264 (filtergraph output feeds the HW encoder).
+
+NEXT — Tier 1 is COMPLETE. STOP for live testing before Tier 2 (subject-aware
+auto-reframe: bundled ONNX face detector, analyze pass -> smoothed center-path,
+pan-within-shot / cut-on-scene-change, previewable path).
+
+
+2026-07-02 — v2 Reframe, Tier 1 Step 2 (manual crop-to-fill, AR-locked)
+----------------------------------------------------------------------
+Goal: add "Crop" as the third fill strategy for preset canvases — the existing
+crop rectangle repurposed as a manual override, AR-locked to the canvas and
+scaled to it on export. No backend change: the crop,scale path already shipped
++ was unit-tested in Step 1 (crop_to_fill_scales_region_to_canvas).
+
+Editing-view decision: for preset+crop the stage shows the FULL source frame
+with an aspect-locked box (like freeform), not a canvas-shaped cover preview —
+you need to see what you're cropping out to place the box. The box interior is
+exactly what fills the canvas.
+
+DONE (frontend only)
+- state.ts:
+    * chooseStrategy(s) — sets fill strategy + reconciles the crop overlay.
+    * syncCropMode() — freeform => unconstrained crop; preset+crop => AR-locked
+      crop (re-seeded to the canvas aspect via seedLockedCrop); else no overlay.
+    * cropAspectLock() — the aspect the box is locked to, or null (freeform).
+    * stageAspect() — shows source aspect while cropMode() (full-frame editing).
+    * buildReframe() — preset+crop now sends the crop rect (+ canvas dims) so the
+      backend does crop,scale; blur/pad still send crop:null.
+- components/CropOverlay.tsx: aspect-locked corner resize (opposite corner
+  pinned, box tracks the farther-moved axis, height follows width, clamped to
+  bounds + min). Freeform keeps the old free per-edge resize.
+- components/ReframePanel.tsx: "Crop" added to the fill toggle; strategy buttons
+  route through chooseStrategy; Position + bar-color hidden for crop; a hint
+  explains the locked box.
+- components/VideoPlayer.tsx: crop strategy shows the full frame (no contain-fit,
+  no blur bg, no pad backdrop) with the crop overlay.
+- ExportPanel.tsx: summary now reads "9:16 · Crop".
+
+VERIFIED
+- npx tsc --noEmit -> 0 (strict).  npm run build -> ok.
+- Backend unchanged from Step 1 (cargo test 22 / clippy clean still hold).
+
+NEEDS LIVE-WINDOW TESTING (npm run tauri dev)
+- Preset + Crop: box stays locked to the canvas aspect through all four corners
+  and near the edges; move stays in-bounds.
+- Export preset+crop into 9:16 / 1:1 / 4:5 / 16:9 — output == canvas dims, kept
+  region matches the box, no distortion, audio intact.
+- Switching ratio while in Crop re-seeds a correctly-shaped box.
+- Freeform still resizes freely (unlocked) and exports at box size (v1 crop).
+
+NEXT
+- Tier 1 Step 3: hardware encoders (encoders.rs) — runtime-probe
+  h264_videotoolbox / nvenc / qsv / amf, auto-select w/ libx264 fallback.
+- Then STOP for live testing before Tier 2 (subject-aware auto-reframe).
+
+
+2026-07-02 — v2 Reframe, Tier 1 Step 1 (blur-fill + pad + Freeform crop)
+------------------------------------------------------------------------
+Goal: replace v1's destructive crop with a Reframe model — pick an output
+canvas ratio, then a fill strategy for how the source fills it. This step ships
+blur-fill and pad; crop-to-fill-with-scaling (Step 2) and hardware encoders
+(Step 3) are deferred. v1 crop survives as the "Freeform" canvas.
+
+Design decision (asked + answered): keep a free-crop escape hatch. Presets are
+AR-locked; "Freeform" = unconstrained crop, output == the rectangle. That path
+is literally v1's `crop=w:h:x:y` filter, so v1 crop is byte-preserved.
+
+DONE
+- Backend (src-tauri/src/cutter.rs): replaced the `Crop`-only path with a
+  `Reframe { canvas_w, canvas_h, strategy, anchor, pad_color, crop }` struct
+  (serde camelCase). New `to_filter()` builds:
+    * Pad  -> `-vf scale=…:force_original_aspect_ratio=decrease,pad=…:color`
+    * Blur -> `-filter_complex` split/gblur/overlay graph, mapped as `[v]`
+    * Crop -> `crop=…` (+ `,scale` only when canvas != crop dims). Freeform
+      (canvas == crop dims) emits the bare `crop=` == v1 verbatim.
+  cut() now branches None / Simple(-vf) / Complex(-filter_complex) and picks the
+  matching `-map` (0:v:0 vs [v]). Everything else (frame-accurate -ss/-t, audio
+  map, CRF 18, faststart, time= progress parse) unchanged.
+- commands.rs: export_clip now takes `reframe: Option<cutter::Reframe>`.
+- Frontend:
+    * src/reframe.ts (new): CanvasRatio / FillStrategy / Anchor types, canvasDims
+      (no-upscale rule: lock to source height, fall back to width), barsAxis,
+      anchor->object-position mapping, Reframe payload type.
+    * state.ts: reframe signals (reframeRatio, fillStrategy, reframeAnchor,
+      padColor), chooseRatio() (Freeform seeds+enables the crop overlay; presets
+      clear it), stageAspect() (preview reshape), buildReframe() (null == v1
+      identity cut), reset in load/close. exportClip sends buildReframe().
+    * ipc.ts: exportClip signature crop -> reframe.
+    * components/ReframePanel.tsx (new): canvas ratio chips, fill toggle
+      (Blur/Pad), bar-color well, position (Top/Center/Bottom or L/C/R by bar
+      axis), Freeform hint. Replaces the old standalone Crop button.
+    * VideoPlayer.tsx: stage doubles as live preview — canvas-aspect stage, a
+      muted blurred backdrop <video> for blur-fill (synced off the main element),
+      solid backdrop for pad, contain+anchor foreground. Crop button removed;
+      CropOverlay still shown (gated on crop mode == Freeform).
+    * ExportPanel.tsx: crop summary -> reframe summary ("9:16 · Blur", or
+      "Crop WxH" for Freeform).
+    * App.tsx / App.css: mount ReframePanel; --aspect from stageAspect(); stage
+      video layering (fg/bg z-index), reframe panel + chip styles.
+
+VERIFIED
+- cd src-tauri && cargo test --lib  -> 22 passed (7 new reframe filtergraph
+  tests: freeform == plain crop, crop-to-fill scale, pad color/anchor, blur
+  graph shape, even-canvas coercion).
+- cd src-tauri && cargo clippy --all-targets -- -D warnings  -> clean.
+- npx tsc --noEmit  -> 0 errors (strict).
+- npm run build  -> ok.
+
+NEEDS LIVE-WINDOW TESTING (npm run tauri dev)
+- Blur-fill preview: the second backdrop <video> actually decodes+syncs in the
+  webview (two video elements, same convertFileSrc). Check drift + play/pause.
+- Export each strategy on a real landscape source into 9:16 / 1:1 / 4:5, and a
+  portrait source into 16:9; confirm bars/anchor match the preview and audio is
+  intact.
+- Freeform export still produces an arbitrary-dimension clip identical to v1.
+- Confirm proxy codecs (avi MPEG-4 / HEVC) still preview and reframe.
+- Regression: Original ratio exports the exact v1 frame-accurate cut (no filter).
+
+NEXT
+- Tier 1 Step 2: manual crop-to-fill — AR-lock CropOverlay to the canvas, add
+  "Crop" to the fill toggle for presets, `crop,scale` filtergraph, cover preview.
+- Tier 1 Step 3: hardware encoders (encoders.rs) — runtime-probe
+  h264_videotoolbox / nvenc / qsv / amf, auto-select w/ libx264 fallback.
+- Then STOP for live testing before Tier 2 (subject-aware auto-reframe).

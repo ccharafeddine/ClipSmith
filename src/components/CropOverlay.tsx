@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { cropMode, cropRect, meta, setCropRect } from "../state";
+import { cropAspectLock, cropMode, cropRect, meta, setCropRect } from "../state";
 
 // Draggable / resizable crop rectangle laid over the video stage. The rectangle
 // is stored in source pixels (state.cropRect); this component maps between those
@@ -33,6 +33,9 @@ export default function CropOverlay() {
     const perY = srcH() / rect.height;
     const ox = e.clientX;
     const oy = e.clientY;
+    // Captured once per drag: the aspect the box is locked to (manual
+    // crop-to-fill), or null for the unconstrained freeform crop.
+    const lockedAr = cropAspectLock();
 
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - ox) * perX;
@@ -45,16 +48,52 @@ export default function CropOverlay() {
         return;
       }
 
-      let left = start.x;
-      let top = start.y;
-      let right = start.x + start.w;
-      let bottom = start.y + start.h;
-      if (handle.includes("w")) left = clamp(start.x + dx, 0, right - MIN_SIZE);
-      if (handle.includes("e"))
-        right = clamp(right + dx, left + MIN_SIZE, srcW());
-      if (handle.includes("n")) top = clamp(start.y + dy, 0, bottom - MIN_SIZE);
-      if (handle.includes("s"))
-        bottom = clamp(bottom + dy, top + MIN_SIZE, srcH());
+      const sLeft = start.x;
+      const sTop = start.y;
+      const sRight = start.x + start.w;
+      const sBottom = start.y + start.h;
+
+      if (lockedAr !== null) {
+        // Aspect-locked corner resize: the opposite corner stays pinned; the box
+        // tracks whichever axis the pointer moved farther, height following width.
+        const anchorX = handle.includes("w") ? sRight : sLeft;
+        const anchorY = handle.includes("n") ? sBottom : sTop;
+        const targetX = clamp((handle.includes("w") ? sLeft : sRight) + dx, 0, srcW());
+        const targetY = clamp((handle.includes("n") ? sTop : sBottom) + dy, 0, srcH());
+        const availW = handle.includes("w") ? anchorX : srcW() - anchorX;
+        const availH = handle.includes("n") ? anchorY : srcH() - anchorY;
+
+        const minW = Math.max(MIN_SIZE, MIN_SIZE * lockedAr);
+        let w = clamp(
+          Math.max(Math.abs(targetX - anchorX), Math.abs(targetY - anchorY) * lockedAr),
+          minW,
+          availW,
+        );
+        let h = w / lockedAr;
+        if (h > availH) {
+          h = availH;
+          w = h * lockedAr;
+        }
+        const left = handle.includes("w") ? anchorX - w : anchorX;
+        const top = handle.includes("n") ? anchorY - h : anchorY;
+        setCropRect({
+          x: Math.round(left),
+          y: Math.round(top),
+          w: Math.round(w),
+          h: Math.round(h),
+        });
+        return;
+      }
+
+      // Free resize (freeform crop): each edge moves independently.
+      let left = sLeft;
+      let top = sTop;
+      let right = sRight;
+      let bottom = sBottom;
+      if (handle.includes("w")) left = clamp(sLeft + dx, 0, right - MIN_SIZE);
+      if (handle.includes("e")) right = clamp(sRight + dx, left + MIN_SIZE, srcW());
+      if (handle.includes("n")) top = clamp(sTop + dy, 0, bottom - MIN_SIZE);
+      if (handle.includes("s")) bottom = clamp(sBottom + dy, top + MIN_SIZE, srcH());
 
       setCropRect({
         x: Math.round(left),

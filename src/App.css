@@ -20,13 +20,18 @@ body {
 /* ---- Layout: full-height app, no page scroll ------------------------- */
 
 .container {
-  max-width: 1280px;
+  /* Wide, but inset a little from the window edges so the preview and the side
+     panel aren't jammed against the frame. Much roomier than the old 1500 cap. */
+  max-width: 1800px;
   height: 100vh;
   margin: 0 auto;
   padding: var(--s4);
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
+  gap: var(--s3);
+  /* The whole app fits the viewport; nothing scrolls the page. Any overflow in
+     the side panel scrolls within that panel, not here. */
+  overflow: hidden;
 }
 
 .app-header {
@@ -34,22 +39,44 @@ body {
   justify-content: center;
 }
 
+/* Empty state: the compact loader sits just under the logo, horizontally
+   centered — not floating in the middle of the window. */
 .empty-state {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   color: var(--fg-3);
 }
 
-/* Single column: video + timeline, then the export panel, centered. */
-.editor-single {
+/* Two columns: the preview + timeline + transport on the left, all export
+   customization on the right. Fills the space under the logo without scrolling.
+   `--budget` is the height available to the preview stage — the viewport minus
+   the logo, paddings, timeline, and transport row. Tune `--reserved` if the
+   timeline ever slips below the fold or leaves too much dead space. */
+.editor {
+  --reserved: 250px;
+  --budget: calc(100vh - var(--reserved));
   flex: 1;
   min-height: 0;
   display: flex;
+  gap: var(--s4);
+  align-items: stretch;
+}
+
+/* Right column: reframe + export controls. Scrolls internally if it ever
+   outgrows the viewport, so the page itself never scrolls. */
+.editor-side {
+  width: 400px;
+  flex: none;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--s3);
+  /* Center the customization block in the tall column so it doesn't cling to
+     the top with dead space below. */
+  justify-content: center;
+  gap: 0;
+  overflow-y: auto;
 }
 
 /* ---- Wordmark: Syne, two-tone, framed by the trim selection ----------- */
@@ -209,16 +236,27 @@ button.export:hover:not(:disabled) {
   flex-direction: column;
   align-items: center;
   gap: var(--s3);
+  width: min(680px, 90vw);
 }
 
-.loader .dropzone {
-  margin: 0;
+/* Upload button + URL field share one compact row. */
+.loader-row {
+  display: flex;
+  gap: var(--s2);
+  width: 100%;
+  align-items: stretch;
+}
+
+.upload-btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 .url-row {
   display: flex;
   gap: var(--s2);
-  width: min(520px, 80vw);
+  flex: 1;
+  min-width: 0;
 }
 
 .url-input {
@@ -276,25 +314,27 @@ button.export:hover:not(:disabled) {
 .filename {
   font-weight: 600;
   color: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .meta-line {
   margin: 0;
-  max-width: 100%;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--s2);
-  color: var(--fg-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-num);
-  font-variant-numeric: tabular-nums;
 }
 
-.meta-text {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Secondary source facts under the filename in the side panel. */
+.meta-detail {
+  margin: var(--s1) 0 0;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Close button: removes the source without opening another. */
@@ -323,31 +363,64 @@ button.export:hover:not(:disabled) {
 
 /* ---- Player + stage --------------------------------------------------- */
 
-/* The video + timeline + controls sit in one block sized to the video so the
-   timeline lines up under the preview. Width is bounded by available height so
-   the page never scrolls. */
+/* Left column: preview, then timeline, then transport, top-aligned. */
 .player {
-  width: 100%;
-  max-width: calc((100vh - 320px) * (var(--aspect)));
-  margin: 0 auto;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--s2);
 }
 
+/* Fixed-height stage area (== --budget). The stage is centered inside it, so
+   changing the canvas ratio only resizes the preview in place — the timeline
+   and transport below never move. */
+.stage-wrap {
+  height: var(--budget);
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Largest box of the canvas aspect that fits the stage area: width is capped by
+   both the column width (100%) and the height budget (--budget × aspect), and
+   the height follows from aspect-ratio — so it fits in both dimensions with the
+   canvas shape preserved, no JS measuring. */
 .stage {
   position: relative;
-  width: 100%;
   aspect-ratio: var(--aspect);
+  width: min(100%, calc(var(--budget) * var(--aspect)));
+  max-height: 100%;
   background: #000;
   border-radius: var(--r-panel);
   overflow: hidden;
 }
 
+/* Two stacked video layers so the stage can double as the reframe preview:
+   the foreground (main, audible) element and, for blur-fill, a blurred backdrop
+   filling the bars. Both fill the stage box; object-fit/position is set inline
+   per reframe. */
 .stage video {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.stage-fg {
+  z-index: 1;
+}
+
+.stage-bg {
+  z-index: 0;
+  object-fit: cover;
+  /* Zoom past the edges so the blur never reveals a transparent border. */
+  filter: blur(28px);
+  transform: scale(1.12);
+  pointer-events: none;
 }
 
 /* Overlay shown while a playback proxy builds, or when preview isn't possible.
@@ -355,6 +428,7 @@ button.export:hover:not(:disabled) {
 .stage-msg {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -386,6 +460,7 @@ button.export:hover:not(:disabled) {
 .crop-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -430,9 +505,102 @@ button.export:hover:not(:disabled) {
   cursor: nwse-resize;
 }
 
-.crop-toggle.active {
+/* ---- Reframe panel ----------------------------------------------------------
+   Canvas ratio + fill strategy + position, sitting between the player and the
+   export panel. Compact chip rows so the page never scrolls. */
+.reframe-panel,
+.export-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A labelled settings group: its label sits directly above its own controls,
+   and a hairline divides it from the group before it, so every setting reads as
+   a distinct block. */
+.field,
+.export-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4) 0;
+  border-top: 1px solid var(--border);
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+}
+
+/* Small "?" affordance next to a label; the explanation is a native tooltip. */
+.info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--fg-3);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.info:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip-group {
+  display: inline-flex;
+  gap: var(--s1);
+  flex-wrap: wrap;
+}
+
+/* Chips reuse the button reset but sit tighter than a standard button. */
+.chip {
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-num);
+  white-space: nowrap;
+  border-radius: var(--r-control);
+  background: var(--bg-control);
+}
+
+/* The canvas ratios stay on a single line — the panel is wide enough for all
+   six chips, so don't let them wrap. */
+.canvas-chips {
+  flex-wrap: nowrap;
+}
+
+.chip.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Native color well, sized to sit on the chip row without a chrome frame. */
+.pad-color {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--bg-control);
+  cursor: pointer;
+}
+
+.reframe-hint {
+  margin: 0;
+  padding: var(--s3) 0 0;
+  color: var(--fg-2);
+  font-size: var(--fs-label);
 }
 
 .controls {
@@ -582,25 +750,17 @@ button.export:hover:not(:disabled) {
 
 /* ---- Export panel ----------------------------------------------------- */
 
-.export-panel {
-  margin-top: var(--s2);
-  width: 100%;
-  max-width: max(420px, calc((100vh - 320px) * (var(--aspect))));
-  margin-left: auto;
-  margin-right: auto;
-  display: flex;
+/* .export-panel is a column via the shared .reframe-panel,.export-panel rule. */
+
+/* One-line clip summary: duration · format · reframe. */
+.export-summary {
+  flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--s3);
-}
-
-.export-meta {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: baseline;
-  gap: var(--s3);
+  gap: var(--s2);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-num);
 }
 
 .export-duration {
@@ -615,48 +775,41 @@ button.export:hover:not(:disabled) {
   color: var(--fg-2);
 }
 
-.export-format {
-  color: var(--accent-2);
-}
-
-.export-crop {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  color: var(--accent-2);
-}
-
-.crop-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.2rem;
-  height: 1.2rem;
-  padding: 0;
-  font-size: 0.9rem;
-  line-height: 1;
-  border-radius: 50%;
+.dot {
   color: var(--fg-3);
-  background: transparent;
 }
 
-.crop-clear:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
+.export-format,
+.export-reframe {
+  color: var(--accent-2);
+}
+
+/* Encoder toggle + the resolved encoder name. */
+.encoder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.export-encoder {
+  color: var(--fg-2);
+  font-size: var(--fs-num);
 }
 
 .export-button {
-  flex: none;
-  min-width: 140px;
+  width: 100%;
+  margin-top: var(--s3);
 }
 
 /* Re-encode progress bar; fill width is set inline from export-progress. */
 .export-progress {
-  flex-basis: 100%;
+  width: 100%;
   height: 6px;
   border-radius: 999px;
   background: var(--bg-control);
   overflow: hidden;
+  margin-top: var(--s2);
 }
 
 .export-progress-fill {
@@ -667,6 +820,5 @@ button.export:hover:not(:disabled) {
 }
 
 .export-error {
-  flex-basis: 100%;
   margin: var(--s2) 0 0;
 }
