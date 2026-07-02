@@ -146,3 +146,38 @@ options, multiple clips and concatenation, filters, and a multi-track timeline.
 
 [GPL-3.0](LICENSE) © Chafic Charafeddine. Bundled FFmpeg is GPL (with `libx264`),
 as noted above.
+
+## Release notes
+
+### v1.0.0
+
+The big one. Cropping grew into full **Reframe**, ClipSmith became a format
+converter, and exports can use your GPU. Grab the installers from the
+[v1.0.0 release](https://github.com/ccharafeddine/ClipSmith/releases/tag/v1.0.0).
+
+- **Reframe** — the target aspect is now an output *canvas*, and you choose how
+  the source fills it:
+  - **Blur-fill** (blurred, zoomed copy fills the bars), **Pad** (solid color
+    bars, your pick), **Crop-to-fill** (manual, aspect-locked box), plus
+    **Original** and a **Freeform** crop.
+  - Canvas presets **9:16 / 1:1 / 4:5 / 16:9**, with source positioning
+    (top/center/bottom or left/center/right) and a live preview on the player.
+- **Output format picker** — export **MP4**, **MOV**, **MKV** (H.264/AAC) or
+  **WebM** (VP9/Opus). ClipSmith now doubles as a container/codec converter.
+- **Hardware encoders** — Apple VideoToolbox (macOS) and NVENC / Quick Sync / AMF
+  (Windows), detected at runtime with a clean **libx264 software fallback**, via
+  an Auto / Software toggle. Comparable quality, much faster where available.
+- **Redesigned editor** — a two-column layout that fits the window without
+  scrolling (preview + timeline on the left, all export settings on the right),
+  `?` tooltips, and an export **success state** with reveal-in-folder.
+- **Hardening** — a security + logic audit added guards around URL import,
+  filtergraph building, path/filename handling, and download size, plus a CI
+  pipeline (fmt / clippy / tests, frontend type-check / tests / build) and Rust +
+  frontend test suites.
+
+### v0.1.0
+
+Initial release: frame-accurate H.264 / AAC `.mp4` cut with an optional crop, a
+zoomable timeline with filmstrip thumbnails and free trim handles, URL import via
+a bundled yt-dlp, and an automatic playback proxy for codecs the webview can't
+decode. (This is where the `libx264` re-encode relicensed the app to GPL-3.0.)
