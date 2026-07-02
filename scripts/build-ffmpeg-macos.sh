@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 #
-# build-ffmpeg-macos.sh — compile a GPL ffmpeg + ffprobe (with a STATIC libx264)
-# from source for BOTH macOS architectures (arm64 native + x86_64 cross), then
-# lipo them into a universal binary. A Tauri universal-apple-darwin build needs
+# build-ffmpeg-macos.sh — compile a GPL ffmpeg + ffprobe from source for BOTH
+# macOS architectures (arm64 native + x86_64 cross), then lipo them into a
+# universal binary. Statically links libx264 (H.264 export), plus libvpx (VP9)
+# and libopus so the WebM output format works on macOS too — matching the
+# prebuilt Windows sidecar. libvpx/libopus are BSD-licensed, so they don't
+# change the GPL status (that comes from libx264; see LICENSE).
+#
+# A Tauri universal-apple-darwin build needs
 # THREE sidecar names per tool: the two per-arch `binaries/<name>-{aarch64,
 # x86_64}-apple-darwin` (resolved by each per-arch sub-build) and the fat
 # `binaries/<name>-universal-apple-darwin` (copied at the final bundle; Tauri does
@@ -29,6 +34,9 @@ FFMPEG_VERSION="${FFMPEG_VERSION:-7.1}"
 # x264 ships no versioned release tarballs; the "stable" branch snapshot is what
 # everyone packages.
 X264_TARBALL="${X264_TARBALL:-https://code.videolan.org/videolan/x264/-/archive/stable/x264-stable.tar.bz2}"
+# VP9 (video) + Opus (audio) for the WebM output format. Both BSD-licensed.
+OPUS_VERSION="${OPUS_VERSION:-1.5.2}"
+VPX_VERSION="${VPX_VERSION:-1.14.1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$REPO_ROOT/src-tauri/binaries"
@@ -57,6 +65,20 @@ curl -fL --retry 3 -o ffmpeg.tar.xz \
 tar xf ffmpeg.tar.xz
 FFMPEG_SRC="$WORK/ffmpeg-${FFMPEG_VERSION}"
 
+echo "Downloading opus ${OPUS_VERSION} source..."
+curl -fL --retry 3 -o opus.tar.gz \
+  "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"
+mkdir opus-src
+tar xf opus.tar.gz -C opus-src --strip-components=1
+OPUS_SRC="$WORK/opus-src"
+
+echo "Downloading libvpx ${VPX_VERSION} source..."
+curl -fL --retry 3 -o libvpx.tar.gz \
+  "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz"
+mkdir vpx-src
+tar xf libvpx.tar.gz -C vpx-src --strip-components=1
+VPX_SRC="$WORK/vpx-src"
+
 # Build a static libx264 then ffmpeg/ffprobe against it, for one arch, and copy
 # the tools into BIN_DIR under the matching Rust target triple. $1 = short label,
 # $2 = target triple, $3 = "cross" for the non-host arch (empty for native).
@@ -81,13 +103,65 @@ build_arch() {
   make -j"$(sysctl -n hw.ncpu)"
   make install
 
-  echo "=== [$label] building ffmpeg (GPL + static libx264 + videotoolbox) ==="
+  echo "=== [$label] building static libopus ==="
+  # Opus uses autotools, so cross-compiles the same way x264 does (--host + an
+  # x86_64 clang). In-tree build, so use a fresh copy per arch.
+  local opusbuild="$WORK/opus-build-${label}"
+  cp -R "$OPUS_SRC" "$opusbuild"
+  cd "$opusbuild"
+  local opus_flags=(
+    --prefix="$prefix"
+    --enable-static
+    --disable-shared
+    --disable-doc
+    --disable-extra-programs
+  )
+  if [ "$mode" = "cross" ]; then
+    CC="clang -arch x86_64" ./configure "${opus_flags[@]}" --host=x86_64-apple-darwin
+  else
+    ./configure "${opus_flags[@]}"
+  fi
+  make -j"$(sysctl -n hw.ncpu)"
+  make install
+
+  echo "=== [$label] building static libvpx (VP9) ==="
+  # libvpx has its own configure and builds out-of-tree. For native arm64 we let
+  # it auto-detect the platform (modern libvpx detects arm64 macOS correctly),
+  # dodging the brittle versioned target string; for the x86_64 cross we must
+  # name the target and point it at an x86_64 clang + nasm (already installed).
+  local vpxbuild="$WORK/vpx-build-${label}"
+  mkdir -p "$vpxbuild"
+  cd "$vpxbuild"
+  local vpx_flags=(
+    --prefix="$prefix"
+    --enable-static
+    --disable-shared
+    --enable-pic
+    --enable-vp9
+    --enable-vp8
+    --disable-examples
+    --disable-tools
+    --disable-docs
+    --disable-unit-tests
+  )
+  if [ "$mode" = "cross" ]; then
+    CC="clang -arch x86_64" "$VPX_SRC/configure" "${vpx_flags[@]}" \
+      --target=x86_64-darwin20-gcc --as=nasm --extra-cflags="-arch x86_64"
+  else
+    "$VPX_SRC/configure" "${vpx_flags[@]}"
+  fi
+  make -j"$(sysctl -n hw.ncpu)"
+  make install
+
+  echo "=== [$label] building ffmpeg (GPL + static libx264/libvpx/libopus) ==="
   mkdir -p "$fbuild"
   cd "$fbuild"
   local ff_flags=(
     --prefix="$fbuild/out"
     --enable-gpl
     --enable-libx264
+    --enable-libvpx
+    --enable-libopus
     --enable-videotoolbox
     --pkg-config-flags=--static
     --extra-cflags="-I$prefix/include"
@@ -111,17 +185,27 @@ build_arch() {
   make -j"$(sysctl -n hw.ncpu)"
   make install
 
-  # Each per-arch binary must include libx264 and must not link a dynamic x264
-  # (otool inspects any mach-o regardless of host arch).
-  if ! "$fbuild/out/bin/ffmpeg" -hide_banner -buildconf | grep -q -- '--enable-libx264'; then
-    echo "error: [$label] ffmpeg lacks --enable-libx264" >&2
-    exit 1
-  fi
-  if otool -L "$fbuild/out/bin/ffmpeg" | grep -qi 'x264'; then
-    echo "error: [$label] ffmpeg links a dynamic libx264; static link failed" >&2
-    otool -L "$fbuild/out/bin/ffmpeg" | grep -i 'x264' >&2
-    exit 1
-  fi
+  # Each per-arch binary must include libx264/libvpx/libopus and must not link
+  # any of them dynamically (otool inspects any mach-o regardless of host arch).
+  local buildconf
+  buildconf="$("$fbuild/out/bin/ffmpeg" -hide_banner -buildconf)"
+  local feature
+  for feature in libx264 libvpx libopus; do
+    if ! grep -q -- "--enable-${feature}" <<<"$buildconf"; then
+      echo "error: [$label] ffmpeg lacks --enable-${feature}" >&2
+      exit 1
+    fi
+  done
+  local dylibs
+  dylibs="$(otool -L "$fbuild/out/bin/ffmpeg")"
+  local lib
+  for lib in x264 vpx opus; do
+    if grep -qi "lib${lib}" <<<"$dylibs"; then
+      echo "error: [$label] ffmpeg dynamically links lib${lib}; static link failed" >&2
+      grep -i "lib${lib}" <<<"$dylibs" >&2
+      exit 1
+    fi
+  done
 
   local tool
   for tool in ffmpeg ffprobe; do

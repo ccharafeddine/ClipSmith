@@ -5,6 +5,7 @@ import {
   encoderLabel,
   exportClip,
   exportError,
+  exportedPath,
   exportProgress,
   exporting,
   fillStrategy,
@@ -19,6 +20,12 @@ import {
 import { isPreset, ratioLabel } from "../reframe";
 import { formatInfo } from "../formats";
 import { formatDuration } from "../format";
+import { revealExport } from "../ipc";
+
+/** File name (no directory) of a saved path. */
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
 
 // Export controls. Every export re-encodes; the output format (container +
 // codecs) is chosen here — MP4 by default, or MOV/MKV/WebM, making ClipSmith a
@@ -150,6 +157,24 @@ export default function ExportPanel() {
 
       <Show when={exportError()}>
         <p class="error export-error">{exportError()}</p>
+      </Show>
+
+      <Show when={!exporting() && exportedPath()}>
+        {(path) => (
+          <p class="export-done">
+            <span class="export-done-check">✓</span> Saved{" "}
+            <span class="export-done-name" title={path()}>
+              {baseName(path())}
+            </span>
+            <button
+              type="button"
+              class="export-reveal"
+              onClick={() => void revealExport(path())}
+            >
+              Open folder
+            </button>
+          </p>
+        )}
       </Show>
     </section>
   );

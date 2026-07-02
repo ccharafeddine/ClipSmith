@@ -3,7 +3,13 @@
 // in one place.
 
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { Reframe } from "./reframe";
+
+/** Reveal the exported file in the OS file manager (Finder / Explorer). */
+export function revealExport(path: string): Promise<void> {
+  return revealItemInDir(path);
+}
 
 export interface VideoMeta {
   duration_secs: number;

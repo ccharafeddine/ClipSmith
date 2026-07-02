@@ -33,7 +33,11 @@ pub async fn generate(
     count: u32,
 ) -> Result<String, String> {
     let count = count.clamp(4, 20);
-    let dur = if duration_secs > 0.05 { duration_secs } else { 1.0 };
+    let dur = if duration_secs > 0.05 {
+        duration_secs
+    } else {
+        1.0
+    };
 
     // One fast keyframe seek per thumbnail (open the input `count` times at evenly
     // spaced timestamps); `-an` skips audio.

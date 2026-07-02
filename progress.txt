@@ -5,6 +5,56 @@ Format: newest entry on top. Each entry = what I did / what I verified / what
 still needs live-window (npm run tauri dev) testing.
 
 
+2026-07-02 — 1.0.0 release hardening (audit + tests + CI + macOS WebM)
+---------------------------------------------------------------------
+User asked to harden before publishing: security+logic audit, tests, and a
+CI pipeline; and to make WebM work on macOS. Ran two parallel audit agents
+(backend + frontend), verified each finding against the code, fixed the real
+ones. Authorized to finish autonomously through re-release.
+
+macOS WebM (build-ffmpeg-macos.sh)
+- Compile static libopus (autotools --host cross, like x264) and libvpx
+  (native arm64 = auto-detect target; x86_64 cross = --target=x86_64-darwin20-gcc
+  --as=nasm CC="clang -arch x86_64") per arch; ffmpeg gets --enable-libvpx
+  --enable-libopus; static-link + buildconf checks extended to vpx/opus. Both
+  BSD, no license change. bash -n clean. (libvpx cross is the CI risk to watch.)
+
+Security fixes (all tested)
+- commands.rs: is_http_url() gate + `--` + --ignore-config + --max-filesize for
+  yt-dlp (arg-injection, HIGH); reject_flaglike() on every path command;
+  safe_filename() in default_save_path; MAX_DOWNLOAD_BYTES cap in download_direct.
+- cutter.rs: pad_color strict #RRGGBB validation (filtergraph injection, MEDIUM);
+  push_bounded() keeps all stderr tail so real errors aren't swallowed.
+Frontend fixes
+- state.ts: reset export error/result/progress on loadVideo (stale state across
+  switch); seekTo clamp can't go negative pre-metadata; clear exportedPath on
+  export start. VideoPlayer: gate blur-bg play/pause with showBlurBg (stale ref).
+- Extracted aspect-locked crop math to reframe.ts lockedCropResize (unit-tested;
+  fixed min-size collapse near edges). Wired export success UI ("Saved ✓" +
+  reveal-in-folder; added opener:allow-reveal-item-in-dir capability).
+Deferred (documented): csp:null + broad asset scope — strict CSP risks breaking
+local video playback on an untestable platform; left as a follow-up.
+
+Tests + CI
+- Rust: 34 tests (added pad_color, push_bounded, url/filename/flaglike guards,
+  direct_media_extension). Frontend: vitest added (node env, no jsdom) — 20 tests
+  for reframe.ts (canvasDims/barsAxis/anchor/lockedCropResize) + formats.ts.
+  package.json: typecheck/test scripts, build now runs tsc first.
+- .github/workflows/ci.yml: on push/PR to master — frontend (typecheck+test+
+  build) and Rust on Ubuntu w/ Tauri deps (fmt --check + clippy -D warnings +
+  test). npm audit: 0 vulnerabilities (bumped vitest to remove the esbuild dev
+  advisory; app's own vite already 6.4.3, patched).
+
+VERIFIED (local)
+- cargo fmt --check ✓, cargo clippy -D warnings ✓, cargo test 34 ✓.
+- npx tsc --noEmit ✓, npm test 20 ✓, npm run build ✓.
+
+NEXT
+- Re-release v1.0.0: delete the premature draft + tag, commit, re-tag, push;
+  watch BOTH ci.yml and release.yml. The macOS release build is the real test of
+  the libvpx/libopus additions — iterate if the cross-compile fails.
+
+
 2026-07-02 — v2, output format picker (ClipSmith as a converter)
 ----------------------------------------------------------------
 User request: keep MP4 default, but let the export write other video file

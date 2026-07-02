@@ -204,12 +204,22 @@ impl Reframe {
         }
     }
 
-    /// The pad bar color as an ffmpeg color argument. `#RRGGBB` becomes
-    /// `0xRRGGBB`; anything else is passed through; missing/empty is `black`.
+    /// The pad bar color as an ffmpeg color argument. Only a strict `#RRGGBB`
+    /// is accepted (emitted as `0xRRGGBB`); anything else falls back to `black`.
+    ///
+    /// The strictness is a security boundary, not just tidiness: `pad_color` is
+    /// interpolated into the `-vf` filtergraph, and a stray `,` (or other filter
+    /// syntax) in an unvalidated value would inject a second ffmpeg filter into
+    /// the chain. Validating to hex keeps arbitrary text out of the graph.
     fn color_arg(&self) -> String {
         match self.pad_color.as_deref() {
-            Some(s) if s.len() == 7 && s.starts_with('#') => format!("0x{}", &s[1..]),
-            Some(s) if !s.is_empty() => s.to_string(),
+            Some(s)
+                if s.len() == 7
+                    && s.starts_with('#')
+                    && s.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit) =>
+            {
+                format!("0x{}", &s[1..])
+            }
             _ => "black".to_string(),
         }
     }
@@ -262,17 +272,29 @@ pub async fn cut(
     let filter = reframe.map_or(VideoFilter::None, |r| r.to_filter());
     match &filter {
         VideoFilter::None => {
-            args.extend(["-map", "0:v:0", "-map", "0:a?"].iter().map(|s| (*s).to_string()));
+            args.extend(
+                ["-map", "0:v:0", "-map", "0:a?"]
+                    .iter()
+                    .map(|s| (*s).to_string()),
+            );
         }
         VideoFilter::Simple(vf) => {
             args.push("-vf".into());
             args.push(vf.clone());
-            args.extend(["-map", "0:v:0", "-map", "0:a?"].iter().map(|s| (*s).to_string()));
+            args.extend(
+                ["-map", "0:v:0", "-map", "0:a?"]
+                    .iter()
+                    .map(|s| (*s).to_string()),
+            );
         }
         VideoFilter::Complex(fc) => {
             args.push("-filter_complex".into());
             args.push(fc.clone());
-            args.extend(["-map", "[v]", "-map", "0:a?"].iter().map(|s| (*s).to_string()));
+            args.extend(
+                ["-map", "[v]", "-map", "0:a?"]
+                    .iter()
+                    .map(|s| (*s).to_string()),
+            );
         }
     }
 
@@ -289,7 +311,10 @@ pub async fn cut(
         .map_err(|e| format!("failed to run ffmpeg: {e}"))?;
 
     // ffmpeg writes its periodic `frame=… time=…` progress to stderr; the final
-    // error summary (if it fails) goes there too, so we keep the tail of it.
+    // error summary (if it fails) goes there too. We parse progress *and* keep a
+    // bounded tail of every stderr chunk — a single chunk can carry both a
+    // `time=` update and the real error text, so excluding progress lines could
+    // otherwise swallow the failure reason. On failure the error is at the tail.
     let mut errors = String::new();
     let total = duration.max(f64::MIN_POSITIVE);
     while let Some(event) = rx.recv().await {
@@ -299,11 +324,10 @@ pub async fn cut(
                 if let Some(secs) = parse_progress_time(&line) {
                     let p = (secs / total).clamp(0.0, 1.0);
                     let _ = app.emit("export-progress", p);
-                } else {
-                    errors.push_str(&line);
                 }
+                push_bounded(&mut errors, &line);
             }
-            CommandEvent::Error(e) => errors.push_str(&e),
+            CommandEvent::Error(e) => push_bounded(&mut errors, &e),
             CommandEvent::Terminated(payload) if payload.code != Some(0) => {
                 return Err(format!("ffmpeg exited with an error: {}", errors.trim()));
             }
@@ -313,6 +337,20 @@ pub async fn cut(
 
     let _ = app.emit("export-progress", 1.0_f64);
     Ok(())
+}
+
+/// Append `chunk` to `buf`, keeping only a bounded tail so a long-running
+/// export's stderr can't grow without limit. Trims on a UTF-8 char boundary.
+fn push_bounded(buf: &mut String, chunk: &str) {
+    const CAP: usize = 8192;
+    buf.push_str(chunk);
+    if buf.len() > CAP {
+        let mut cut = buf.len() - CAP;
+        while cut < buf.len() && !buf.is_char_boundary(cut) {
+            cut += 1;
+        }
+        buf.drain(..cut);
+    }
 }
 
 /// Parse the seconds value out of an ffmpeg progress line's `time=HH:MM:SS.xx`
@@ -349,7 +387,12 @@ mod tests {
 
     #[test]
     fn crop_filter_is_even_and_bounded() {
-        let c = Crop { x: 11, y: 7, w: 101, h: 51 };
+        let c = Crop {
+            x: 11,
+            y: 7,
+            w: 101,
+            h: 51,
+        };
         assert_eq!(c.to_filter(), "crop=100:50:10:6");
     }
 
@@ -376,7 +419,12 @@ mod tests {
             strategy: Strategy::Crop,
             anchor: Anchor::Center,
             pad_color: None,
-            crop: Some(Crop { x: 10, y: 6, w: 100, h: 50 }),
+            crop: Some(Crop {
+                x: 10,
+                y: 6,
+                w: 100,
+                h: 50,
+            }),
         };
         assert_eq!(simple(&r), "crop=100:50:10:6");
     }
@@ -389,7 +437,12 @@ mod tests {
             strategy: Strategy::Crop,
             anchor: Anchor::Center,
             pad_color: None,
-            crop: Some(Crop { x: 0, y: 0, w: 540, h: 960 }),
+            crop: Some(Crop {
+                x: 0,
+                y: 0,
+                w: 540,
+                h: 960,
+            }),
         };
         assert_eq!(simple(&r), "crop=540:960:0:0,scale=1080:1920,setsar=1");
     }
@@ -405,6 +458,52 @@ mod tests {
             crop: None,
         };
         assert!(matches!(r.to_filter(), VideoFilter::None));
+    }
+
+    #[test]
+    fn pad_color_accepts_only_strict_hex() {
+        let mk = |c: Option<&str>| Reframe {
+            canvas_w: 100,
+            canvas_h: 100,
+            strategy: Strategy::Pad,
+            anchor: Anchor::Center,
+            pad_color: c.map(str::to_string),
+            crop: None,
+        };
+        // Valid hex → 0xRRGGBB (case-insensitive).
+        assert!(simple(&mk(Some("#1a2B3c"))).contains(":0x1a2B3c,setsar=1"));
+        // Injection attempts and junk → black, never passed through.
+        for bad in [
+            "black,crop=1:1:0:0",
+            "#12,45,6",
+            "red",
+            "#12345",
+            "#1234gg",
+            "",
+        ] {
+            let f = simple(&mk(Some(bad)));
+            assert!(
+                f.contains(":black,setsar=1"),
+                "{bad:?} should fall back to black: {f}"
+            );
+            assert!(
+                !f.contains("crop=1:1"),
+                "{bad:?} must not inject a filter: {f}"
+            );
+        }
+        // Missing → black.
+        assert!(simple(&mk(None)).contains(":black,setsar=1"));
+    }
+
+    #[test]
+    fn push_bounded_keeps_tail_on_char_boundary() {
+        let mut buf = String::new();
+        for _ in 0..1000 {
+            push_bounded(&mut buf, "élan ");
+        }
+        assert!(buf.len() <= 8192 + 5);
+        // Still valid UTF-8 (drain never split a multibyte char).
+        assert!(buf.ends_with("élan "));
     }
 
     #[test]

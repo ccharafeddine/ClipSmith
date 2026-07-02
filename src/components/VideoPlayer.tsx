@@ -179,11 +179,13 @@ export default function VideoPlayer() {
           onError={buildProxy}
           onPlay={() => {
             setPlaying(true);
-            if (bgEl) void bgEl.play().catch(() => {});
+            // Only drive the blur backdrop while it's actually mounted; after a
+            // strategy switch `bgEl` may point at a detached element.
+            if (showBlurBg() && bgEl) void bgEl.play().catch(() => {});
           }}
           onPause={() => {
             setPlaying(false);
-            bgEl?.pause();
+            if (showBlurBg() && bgEl) bgEl.pause();
           }}
           onEnded={() => setPlaying(false)}
         />

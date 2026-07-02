@@ -15,10 +15,10 @@
 //!   `libvpx`/`libopus` in the bundled ffmpeg, which isn't guaranteed on every
 //!   build, so WebM is offered only when a runtime probe confirms it encodes.
 //!
-//! MAINTAINER NOTE: the Windows GPL ffmpeg (BtbN) bundles libvpx + libopus, so
-//! WebM works there. The from-source macOS ffmpeg only adds libx264 today — to
-//! enable WebM on macOS, add `--enable-libvpx --enable-libopus` (and build those
-//! libs) in `scripts/build-ffmpeg-macos.sh`. Until then WebM self-hides on Macs.
+//! WebM works on both platforms: the Windows GPL ffmpeg (BtbN) bundles libvpx +
+//! libopus, and `scripts/build-ffmpeg-macos.sh` compiles static libvpx + libopus
+//! into the macOS sidecar. The runtime probe still gates WebM, so if a future
+//! build ever drops those libs, WebM self-hides rather than failing at export.
 
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
@@ -78,7 +78,11 @@ impl OutputFormat {
     /// keeps every target broadly compatible.
     pub fn video_args(self, encoder: VideoEncoder) -> Vec<String> {
         if self.uses_h264() {
-            return encoder.video_args().iter().map(|s| (*s).to_string()).collect();
+            return encoder
+                .video_args()
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
         }
         // WebM: VP9 in constant-quality mode (`-b:v 0` + `-crf`). `good`/cpu-used
         // 2 and row multithreading trade a little speed for quality; VP9 software
@@ -128,9 +132,16 @@ impl OutputFormat {
         args.extend(self.audio_args().iter().map(|s| (*s).to_string()));
         args.extend(self.container_args().iter().map(|s| (*s).to_string()));
         args.extend(
-            ["-avoid_negative_ts", "make_zero", "-f", self.muxer(), "-y", output]
-                .iter()
-                .map(|s| (*s).to_string()),
+            [
+                "-avoid_negative_ts",
+                "make_zero",
+                "-f",
+                self.muxer(),
+                "-y",
+                output,
+            ]
+            .iter()
+            .map(|s| (*s).to_string()),
         );
         args
     }

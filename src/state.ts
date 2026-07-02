@@ -108,8 +108,10 @@ export function registerVideo(el: HTMLVideoElement | null): void {
 
 /** Seek the video (and the playhead signal) to `t`, clamped to [0, duration]. */
 export function seekTo(t: number): void {
-  const max = duration() || t;
-  const clamped = Math.min(Math.max(t, 0), max);
+  // Clamp the low bound independently of duration so a negative `t` (e.g. a
+  // frame-step fired before metadata resolves, when duration() is still 0) can
+  // never set a negative currentTime.
+  const clamped = Math.min(Math.max(t, 0), duration() || Number.POSITIVE_INFINITY);
   if (videoEl) videoEl.currentTime = clamped;
   setCurrentTime(clamped);
 }
@@ -294,6 +296,11 @@ export async function loadVideo(path: string): Promise<void> {
     setFilmstripSrc("");
     setCropRect(null);
     setCropMode(false);
+    // Clear any export result/error from the previous video so a stale message
+    // doesn't stick when switching sources directly (without hitting close).
+    setExportError("");
+    setExportedPath(null);
+    setExportProgress(0);
     // Reframe defaults to "original" (identity — v1's plain frame-accurate cut).
     setReframeRatio("original");
     setFillStrategy("blur");
@@ -466,6 +473,7 @@ export async function exportClip(): Promise<void> {
   if (typeof output !== "string") return;
 
   setExportError("");
+  setExportedPath(null);
   setExportProgress(0);
   setExporting(true);
   // Reflect the backend's re-encode progress on the Export button / bar.

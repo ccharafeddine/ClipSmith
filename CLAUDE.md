@@ -119,12 +119,20 @@ npm run tauri build
 # Frontend-only dev (no Tauri, useful for component work)
 npm run dev
 
-# Rust tests
-cd src-tauri && cargo test
+# Frontend type-check + unit tests (vitest, pure-logic modules)
+npm run typecheck
+npm test
 
-# Rust lint
+# Rust tests + lint + format
+cd src-tauri && cargo test
 cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd src-tauri && cargo fmt --all -- --check
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of these on every push/PR to `master`
+(frontend job: typecheck + vitest + build; Rust job on Ubuntu with the Tauri
+system deps: `cargo fmt --check` + clippy + tests). Installer builds are separate
+(`release.yml`, on a `v*` tag).
 
 ## Conventions
 
@@ -248,9 +256,23 @@ Built in two milestones; **stop after Tier 1 for live testing** before Tier 2.
 ClipSmith exports **MP4 by default** but can write **MOV**, **MKV**, or **WebM** — a built-in container/codec converter. Because the trim and reframe filtergraph are codec-agnostic (they hand off `yuv420p`), a format only changes the tail of the ffmpeg command: video codec, audio codec, and muxer. `formats.rs` owns this:
 
 - **MP4 / MOV / MKV → H.264 + AAC.** These reuse the whole pipeline, including the `VideoEncoder` choice (libx264 or a detected hardware encoder). `+faststart` for mp4/mov only. Always available (libx264 ships).
-- **WebM → VP9 + Opus.** A different codec path: hardware H.264 doesn't apply (VP9 is software `libvpx-vp9`, CRF 31), audio is Opus. It needs `libvpx`/`libopus` in the bundled ffmpeg, which the from-source macOS build may lack, so WebM is **runtime-probed** (a VP9+Opus test-encode via `formats::available_cached`, cached in a Tauri `OnceCell`) and only offered when it actually encodes. The Windows BtbN build has them; to enable WebM on macOS add `--enable-libvpx --enable-libopus` to `scripts/build-ffmpeg-macos.sh`.
+- **WebM → VP9 + Opus.** A different codec path: hardware H.264 doesn't apply (VP9 is software `libvpx-vp9`, CRF 31), audio is Opus. It's **runtime-probed** (a VP9+Opus test-encode via `formats::available_cached`, cached in a Tauri `OnceCell`) and only offered when the bundled ffmpeg actually encodes it. Both platforms ship it: the Windows BtbN build bundles libvpx/libopus, and `scripts/build-ffmpeg-macos.sh` compiles static libvpx (native arm64 auto-detect; `x86_64-darwin20-gcc` + nasm for the cross) and libopus into the macOS sidecar. The probe is the safety net if a build ever drops them.
 
 `OutputFormat::encode_args(encoder, output)` builds the video+audio+container+muxer+output tail; `cutter::cut` takes a `cutter::Encoding { format, encoder }`. `export_clip` takes a grouped `ExportOptions { reframe, format, useHardware }` (keeps the command under clippy's 7-arg limit) and only detects a hardware encoder for H.264 formats. Frontend: `src/formats.ts` (display metadata), `outputFormat` + `availableFormatIds` signals, a **Format** field of chips in the export panel (with a codec hint), and the Encoder field shown only for H.264 formats. The save dialog defaults to the chosen extension. **(shipped)**
+
+### Security & hardening (v2)
+
+A pre-1.0 security/logic audit added these guards (all covered by tests):
+
+- **yt-dlp argument injection** — the import URL is validated to `http`/`https` (`is_http_url`), passed after a `--` end-of-options separator, and yt-dlp runs with `--ignore-config` (so a planted config can't inject `--exec` etc.) and `--max-filesize`. A `--flag`-shaped "URL" is rejected before it reaches yt-dlp.
+- **Filtergraph injection** — `pad_color` is strictly validated to `#RRGGBB` → `0xRRGGBB` (else `black`), so no arbitrary text (a stray `,` would inject a second `-vf` filter) reaches the filtergraph.
+- **Path/arg safety** — user paths handed to ffmpeg/ffprobe are rejected if they start with `-` (`reject_flaglike`); `default_save_path` sanitizes the suggested filename to its final component (`safe_filename`) so it can't escape the exports folder.
+- **Download limits** — both the direct fetch and yt-dlp cap the size (`MAX_DOWNLOAD_BYTES` / `--max-filesize`) as a runaway-disk guard.
+- **Error fidelity** — the export keeps a bounded tail of *all* ffmpeg stderr (not just non-progress lines) so a real failure reason isn't swallowed when a chunk also carries a `time=` update.
+
+Frontend fixes: export result/error state is cleared on a direct video switch; the blur-backdrop `<video>` is only driven while mounted; `seekTo` can't go negative before metadata resolves; the aspect-locked crop resize (extracted to `reframe.ts` `lockedCropResize`, unit-tested) won't collapse below the minimum near a frame edge. The export now has a success state ("Saved ✓" + reveal-in-folder via `opener:allow-reveal-item-in-dir`).
+
+Known/accepted: `tauri.conf.json` keeps `csp: null` and a broad `assetProtocol.scope` — the app plays arbitrary local videos through the asset protocol and loads no remote content, so a strict CSP is a deferred hardening item rather than a shipped one (getting media-src wrong silently breaks playback on a platform that can't be dev-tested here).
 
 **Tier 2 — subject-aware crop-to-fill.** The first feature that must *understand* the video, so treat it like CaptionSmith's whisper integration, not a filter. Bundled local face detector via ONNX Runtime (`ort`, MIT) — **not** Ultralytics YOLO (AGPL). Two-phase like transcription: a cancellable **analyze** pass samples frames, runs detection, and builds a temporally-smoothed (low-pass/eased) center-path; the **encode** then drives a time-varying `crop`. Pan smoothly within a shot; **hard-cut** across scene changes (detect cheaply with `select='gt(scene,…)'`); on no detection, hold last position / center (never lurch). Ideally the smoothed path is previewable and nudgeable before committing.
 

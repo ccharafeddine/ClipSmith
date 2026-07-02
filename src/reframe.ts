@@ -153,6 +153,69 @@ export function anchorLabels(
   return { start: "Top", center: "Center", end: "Bottom" };
 }
 
+function clampNum(x: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, x));
+}
+
+/** A crop corner handle. */
+export type CropHandle = "nw" | "ne" | "sw" | "se";
+
+/**
+ * Aspect-locked crop resize for a corner drag. The corner opposite `handle`
+ * stays pinned; the dragged corner tracks the pointer (`dx`/`dy` in source
+ * pixels) while preserving aspect `ar`. The result is clamped to the source
+ * frame and to `minSize`, and is never negative or out of bounds. If the pinned
+ * corner is too close to an edge to fit the minimum box, `start` is returned
+ * unchanged (rather than collapsing below the minimum).
+ */
+export function lockedCropResize(
+  handle: CropHandle,
+  start: CropRect,
+  dx: number,
+  dy: number,
+  srcW: number,
+  srcH: number,
+  ar: number,
+  minSize: number,
+): CropRect {
+  const west = handle.includes("w");
+  const north = handle.includes("n");
+  const sLeft = start.x;
+  const sTop = start.y;
+  const sRight = start.x + start.w;
+  const sBottom = start.y + start.h;
+
+  const anchorX = west ? sRight : sLeft;
+  const anchorY = north ? sBottom : sTop;
+  const targetX = clampNum((west ? sLeft : sRight) + dx, 0, srcW);
+  const targetY = clampNum((north ? sTop : sBottom) + dy, 0, srcH);
+  const availW = west ? anchorX : srcW - anchorX;
+  const availH = north ? anchorY : srcH - anchorY;
+
+  const minW = Math.max(minSize, minSize * ar);
+  if (availW < minW || availH < minSize) return start;
+
+  // Track whichever axis the pointer moved farther, height follows width.
+  let w = clampNum(
+    Math.max(Math.abs(targetX - anchorX), Math.abs(targetY - anchorY) * ar),
+    minW,
+    availW,
+  );
+  let h = w / ar;
+  if (h > availH) {
+    h = availH;
+    w = h * ar;
+  }
+  const left = west ? anchorX - w : anchorX;
+  const top = north ? anchorY - h : anchorY;
+  return {
+    x: Math.round(left),
+    y: Math.round(top),
+    w: Math.round(w),
+    h: Math.round(h),
+  };
+}
+
 /**
  * The payload handed to the backend `export_clip` command. Matches
  * `cutter::Reframe` (serde `camelCase`). `null` means an identity export (v1's

@@ -32,14 +32,49 @@ async fn run_ffprobe(app: &tauri::AppHandle, args: &[&str]) -> Result<String, St
         return Err(format!("ffprobe exited with an error: {}", stderr.trim()));
     }
 
-    String::from_utf8(output.stdout)
-        .map_err(|e| format!("ffprobe output was not valid UTF-8: {e}"))
+    String::from_utf8(output.stdout).map_err(|e| format!("ffprobe output was not valid UTF-8: {e}"))
 }
+
+/// Reject a path that ffmpeg/ffprobe would parse as an option (leading `-`).
+/// Paths come from native dialogs / temp downloads and are normally absolute, so
+/// this is a cheap defense-in-depth invariant against argument injection.
+fn reject_flaglike(path: &str) -> Result<(), String> {
+    if path.starts_with('-') {
+        return Err("that file path isn't allowed".to_string());
+    }
+    Ok(())
+}
+
+/// Whether `url` is an http/https URL — the only schemes ClipSmith will fetch.
+/// Blocks `file://`, `--flag`-shaped strings, and anything else before it reaches
+/// yt-dlp (which would otherwise treat a non-URL as a CLI option).
+fn is_http_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .map(|u| matches!(u.scheme(), "http" | "https"))
+        .unwrap_or(false)
+}
+
+/// The final path component of `name`, so a suggested save filename can't carry
+/// directory separators or `..` that would escape the exports folder.
+fn safe_filename(name: &str) -> String {
+    Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("clip.mp4")
+        .to_string()
+}
+
+/// Sanity ceiling for a URL download (direct fetch and yt-dlp): a runaway guard
+/// against filling the disk, set well above any normal source video.
+const MAX_DOWNLOAD_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const MAX_DOWNLOAD_YTDLP: &str = "16G";
 
 /// Probe a video file with the bundled `ffprobe` sidecar and return its
 /// [`VideoMeta`]. The source is read in place and never modified.
 #[tauri::command]
 pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMeta, String> {
+    reject_flaglike(&path)?;
     let json = run_ffprobe(
         &app,
         &[
@@ -67,6 +102,7 @@ pub async fn probe_video(app: tauri::AppHandle, path: String) -> Result<VideoMet
 /// with `0.0` always present. Drives the magnetic IN handle.
 #[tauri::command]
 pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f64>, String> {
+    reject_flaglike(&path)?;
     let json = run_ffprobe(
         &app,
         &[
@@ -116,6 +152,8 @@ pub async fn export_clip(
     duration: f64,
     options: ExportOptions,
 ) -> Result<(), String> {
+    reject_flaglike(&input)?;
+    reject_flaglike(&output)?;
     let fmt = OutputFormat::from_id(&options.format).unwrap_or(OutputFormat::Mp4);
     // Hardware encoding only applies to the H.264 formats; WebM is always VP9.
     let encoder = if fmt.uses_h264() && options.use_hardware {
@@ -123,8 +161,20 @@ pub async fn export_clip(
     } else {
         VideoEncoder::X264
     };
-    let encoding = cutter::Encoding { format: fmt, encoder };
-    cutter::cut(&app, &input, &output, start, duration, options.reframe, encoding).await
+    let encoding = cutter::Encoding {
+        format: fmt,
+        encoder,
+    };
+    cutter::cut(
+        &app,
+        &input,
+        &output,
+        start,
+        duration,
+        options.reframe,
+        encoding,
+    )
+    .await
 }
 
 /// The output formats the bundled ffmpeg can produce, as their ids
@@ -145,7 +195,10 @@ pub async fn available_formats(app: tauri::AppHandle) -> Vec<String> {
 /// libx264 — so this always returns a name.
 #[tauri::command]
 pub async fn detect_encoder(app: tauri::AppHandle) -> String {
-    encoders::detect_cached(&app).await.display_name().to_string()
+    encoders::detect_cached(&app)
+        .await
+        .display_name()
+        .to_string()
 }
 
 /// Resolve ClipSmith's default exports folder. Does not create it: callers that
@@ -182,7 +235,12 @@ pub fn default_save_path(app: tauri::AppHandle, filename: String) -> Result<Stri
     let dir = exports_dir(&app)?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("could not create the export folder: {e}"))?;
-    Ok(dir.join(filename).to_string_lossy().into_owned())
+    // Sanitize: only the final component, so an absolute or `..`-laden name can't
+    // point the suggested save path outside the exports folder.
+    Ok(dir
+        .join(safe_filename(&filename))
+        .to_string_lossy()
+        .into_owned())
 }
 
 /// Build the timeline preview strip for `path` and return it as a PNG data URI.
@@ -194,6 +252,7 @@ pub async fn generate_filmstrip(
     duration_secs: f64,
     count: u32,
 ) -> Result<String, String> {
+    reject_flaglike(&path)?;
     filmstrip::generate(&app, &path, duration_secs, count).await
 }
 
@@ -243,6 +302,7 @@ pub fn cleanup_temp() {
 /// Returns a user-facing message if ffmpeg can't be located or transcoding fails.
 #[tauri::command]
 pub async fn generate_proxy(app: AppHandle, path: String) -> Result<String, String> {
+    reject_flaglike(&path)?;
     remove_proxy_files();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -350,9 +410,16 @@ fn direct_media_extension(url: &str) -> Option<String> {
 fn ffmpeg_path() -> std::io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let dir = exe.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "current exe has no parent dir")
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "current exe has no parent dir",
+        )
     })?;
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     Ok(dir.join(name))
 }
 
@@ -406,7 +473,10 @@ async fn download_direct(
         .await
         .map_err(|_| "Couldn't reach that link. Check the URL and your connection.".to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("the server returned {} for that link", resp.status()));
+        return Err(format!(
+            "the server returned {} for that link",
+            resp.status()
+        ));
     }
 
     let total = resp.content_length();
@@ -430,6 +500,11 @@ async fn download_direct(
         file.write_all(&chunk)
             .map_err(|e| format!("could not write the download: {e}"))?;
         downloaded += chunk.len() as u64;
+        if downloaded > MAX_DOWNLOAD_BYTES {
+            drop(file);
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("that download is too large".to_string());
+        }
         if let Some(total) = total.filter(|t| *t > 0) {
             let p = (downloaded as f64 / total as f64).clamp(0.0, 1.0);
             let _ = app.emit("download-progress", p);
@@ -456,6 +531,12 @@ pub async fn download_video(
     let flag = cancel.0.clone();
     flag.store(false, Ordering::SeqCst);
 
+    // Only http/https. Blocks file:// and, crucially, `--flag`-shaped strings
+    // that yt-dlp would otherwise parse as options rather than a URL.
+    if !is_http_url(&url) {
+        return Err("Only http and https links are supported.".to_string());
+    }
+
     // Direct file links skip yt-dlp entirely: a plain streaming GET is faster and
     // works even for hosts yt-dlp has no extractor for.
     if let Some(ext) = direct_media_extension(&url) {
@@ -468,20 +549,31 @@ pub async fn download_video(
     let template = dir.join("source.%(ext)s");
 
     let mut args: Vec<String> = vec![
+        // Ignore any user/global yt-dlp config so a planted config file can't
+        // inject options (e.g. --exec); cap the size as a runaway disk guard.
+        "--ignore-config".into(),
+        "--max-filesize".into(),
+        MAX_DOWNLOAD_YTDLP.into(),
         "--no-playlist".into(),
         "--no-part".into(),
         "--newline".into(),
         "-f".into(),
         // Prefer an H.264 mp4 the webview can play; fall back to anything.
-        "bestvideo[height<=1080][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best".into(),
+        "bestvideo[height<=1080][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            .into(),
         "-o".into(),
         template.to_string_lossy().into_owned(),
     ];
     // Let yt-dlp use our ffmpeg for any remux/merge it needs.
-    if let Some(dir) = ffmpeg_path().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+    if let Some(dir) = ffmpeg_path()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+    {
         args.push("--ffmpeg-location".into());
         args.push(dir.to_string_lossy().into_owned());
     }
+    // End-of-options: everything after `--` is a positional URL, never a flag.
+    args.push("--".into());
     args.push(url);
 
     // MAINTAINER NOTE: the bundled yt-dlp goes stale as sites change their
@@ -542,5 +634,54 @@ pub async fn download_video(
     match file {
         Some(p) => Ok(p.to_string_lossy().into_owned()),
         None => Err("the download produced no file".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_http_and_https_urls_pass() {
+        assert!(is_http_url("https://example.com/v.mp4"));
+        assert!(is_http_url("http://host/path?q=1"));
+        // Blocked: other schemes, flag-shaped strings, and non-URLs.
+        assert!(!is_http_url("file:///etc/passwd"));
+        assert!(!is_http_url("ftp://host/x"));
+        assert!(!is_http_url("--config-location=/tmp/x"));
+        assert!(!is_http_url("just some text"));
+    }
+
+    #[test]
+    fn safe_filename_keeps_only_the_final_component() {
+        assert_eq!(safe_filename("clip.mp4"), "clip.mp4");
+        assert_eq!(safe_filename("../../etc/evil"), "evil");
+        assert_eq!(safe_filename("/abs/path/x.webm"), "x.webm");
+        assert_eq!(safe_filename(""), "clip.mp4");
+        assert_eq!(safe_filename("../"), "clip.mp4");
+    }
+
+    #[test]
+    fn flaglike_paths_are_rejected() {
+        assert!(reject_flaglike("-rf").is_err());
+        assert!(reject_flaglike("--output=/tmp/x").is_err());
+        assert!(reject_flaglike("/home/u/clip.mp4").is_ok());
+        assert!(reject_flaglike("C:/videos/clip.mp4").is_ok());
+    }
+
+    #[test]
+    fn direct_media_extension_classifies_links() {
+        assert_eq!(
+            direct_media_extension("https://h/x.MP4"),
+            Some("mp4".to_string())
+        );
+        assert_eq!(
+            direct_media_extension("https://h/a/b.webm?t=1"),
+            Some("webm".to_string())
+        );
+        assert_eq!(
+            direct_media_extension("https://youtube.com/watch?v=x"),
+            None
+        );
     }
 }

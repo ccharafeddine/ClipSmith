@@ -79,16 +79,36 @@ impl VideoEncoder {
             ],
             // VideoToolbox: constant-quality mode (`-q:v`, higher is better).
             Self::VideoToolbox => vec![
-                "-c:v", "h264_videotoolbox", "-q:v", "60", "-pix_fmt", "yuv420p",
+                "-c:v",
+                "h264_videotoolbox",
+                "-q:v",
+                "60",
+                "-pix_fmt",
+                "yuv420p",
             ],
             // NVENC: VBR with a constant-quality target and no bitrate ceiling.
             Self::Nvenc => vec![
-                "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19", "-b:v", "0",
-                "-pix_fmt", "yuv420p",
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p5",
+                "-rc",
+                "vbr",
+                "-cq",
+                "19",
+                "-b:v",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
             ],
             // Quick Sync: ICQ via -global_quality; qsv prefers nv12 input.
             Self::Qsv => vec![
-                "-c:v", "h264_qsv", "-global_quality", "20", "-pix_fmt", "nv12",
+                "-c:v",
+                "h264_qsv",
+                "-global_quality",
+                "20",
+                "-pix_fmt",
+                "nv12",
             ],
             // AMF: constant QP.
             Self::Amf => vec![

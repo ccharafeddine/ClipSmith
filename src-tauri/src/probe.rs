@@ -217,6 +217,9 @@ mod tests {
 
     #[test]
     fn errors_on_malformed_json() {
-        assert!(matches!(parse_meta("not json", "mp4"), Err(ProbeError::Json(_))));
+        assert!(matches!(
+            parse_meta("not json", "mp4"),
+            Err(ProbeError::Json(_))
+        ));
     }
 }

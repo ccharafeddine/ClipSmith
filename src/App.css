@@ -822,3 +822,35 @@ button.export:hover:not(:disabled) {
 .export-error {
   margin: var(--s2) 0 0;
 }
+
+/* Success state after an export: confirmation + reveal-in-folder action. */
+.export-done {
+  margin: var(--s2) 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  font-size: var(--fs-num);
+  color: var(--fg-2);
+}
+
+.export-done-check {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.export-done-name {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.export-reveal {
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-label);
+  border-radius: var(--r-control);
+  background: var(--bg-control);
+}
