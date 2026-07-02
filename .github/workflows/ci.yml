@@ -57,6 +57,19 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # The Tauri build script validates that each externalBin sidecar exists for
+      # the host triple, even for `cargo check`/`clippy`/`test` (which don't
+      # bundle). These CI checks don't run the real ffmpeg, so empty stub files
+      # satisfy the existence check without downloading/compiling the sidecars.
+      - name: Stub sidecar binaries for the Rust checks
+        run: |
+          mkdir -p src-tauri/binaries
+          triple=x86_64-unknown-linux-gnu
+          for bin in ffmpeg ffprobe yt-dlp; do
+            touch "src-tauri/binaries/${bin}-${triple}"
+            chmod +x "src-tauri/binaries/${bin}-${triple}"
+          done
+
       - name: Format check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
