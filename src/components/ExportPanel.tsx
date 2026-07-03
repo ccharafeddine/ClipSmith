@@ -12,6 +12,7 @@ import {
   hwAccel,
   inPoint,
   losslessMode,
+  muted,
   outPoint,
   outputFormat,
   qualityTier,
@@ -19,9 +20,12 @@ import {
   resolutionId,
   setHwAccel,
   setLossless,
+  setMuted,
   setOutputFormat,
   setQualityTier,
   setResolutionId,
+  setVolume,
+  volume,
 } from "../state";
 import { isPreset, ratioLabel } from "../reframe";
 import { formatInfo } from "../formats";
@@ -189,6 +193,44 @@ export default function ExportPanel() {
             )}
           </For>
         </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">
+            Audio
+            <span
+              class="info"
+              title="Mute drops the audio from the export. Volume applies a gain (0–200%); the preview mirrors it up to 100%, and the export applies the full amount."
+            >
+              ?
+            </span>
+          </span>
+          <div class="audio-row">
+            <button
+              type="button"
+              class="chip"
+              classList={{ active: muted() }}
+              aria-pressed={muted()}
+              title={muted() ? "Audio is muted" : "Mute the audio"}
+              onClick={() => setMuted(!muted())}
+            >
+              {muted() ? "Muted" : "Mute"}
+            </button>
+            <input
+              type="range"
+              class="audio-volume"
+              min="0"
+              max="200"
+              step="5"
+              disabled={muted()}
+              value={Math.round(volume() * 100)}
+              aria-label="Volume"
+              onInput={(e) => setVolume(e.currentTarget.valueAsNumber / 100)}
+            />
+            <span class="audio-value">
+              {muted() ? "—" : `${Math.round(volume() * 100)}%`}
+            </span>
+          </div>
         </div>
       </Show>
 

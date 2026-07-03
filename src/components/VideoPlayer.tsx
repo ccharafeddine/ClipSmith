@@ -8,9 +8,11 @@ import {
   filePath,
   inPoint,
   meta,
+  muted,
   outPoint,
   padColor,
   playing,
+  volume,
   reframeAnchor,
   reframeRatio,
   registerVideo,
@@ -28,9 +30,10 @@ import { formatDuration } from "../format";
 import Timeline from "./Timeline";
 import CropOverlay from "./CropOverlay";
 
-// Renders the loaded video with custom transport controls. Audio is kept
-// intact — the element is never muted, since the player doubles as the preview.
-// Playback loops between the IN and OUT handles.
+// Renders the loaded video with custom transport controls. Audio is kept by
+// default (the player doubles as the preview) but honors the export's Mute and
+// Volume so the preview matches what will be exported. Playback loops between the
+// IN and OUT handles.
 //
 // The stage doubles as the live reframe preview: it takes the output canvas
 // aspect (set via --aspect on the editor container), the foreground video is
@@ -48,6 +51,17 @@ export default function VideoPlayer() {
   // The blurred-bar background video for blur-fill preview. Muted and synced to
   // the main element; decorative, so small drift is invisible under the blur.
   let bgEl: HTMLVideoElement | undefined;
+
+  // The foreground (audible) element. Kept so the preview can mirror the export's
+  // mute/volume. The element's `volume` is 0-1, so a boost above 100% previews at
+  // 100% (the export still applies the real gain).
+  let fgEl: HTMLVideoElement | undefined;
+  createEffect(() => {
+    const el = fgEl;
+    if (!el) return;
+    el.muted = muted();
+    el.volume = Math.min(1, Math.max(0, volume()));
+  });
 
   const src = createMemo(() => {
     const proxy = proxySrc();
@@ -171,7 +185,10 @@ export default function VideoPlayer() {
         </Show>
         <video
           class="stage-fg"
-          ref={(el) => registerVideo(el)}
+          ref={(el) => {
+            fgEl = el;
+            registerVideo(el);
+          }}
           src={src()}
           style={fgStyle()}
           onLoadedMetadata={onLoadedMetadata}

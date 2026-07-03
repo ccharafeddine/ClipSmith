@@ -111,6 +111,12 @@ export function resolutionCap(): number | null {
 export const [losslessMode, setLosslessMode] = createSignal(false);
 export const [keyframes, setKeyframes] = createSignal<number[]>([]);
 
+// Audio controls. `muted` drops the audio from the export (and the preview);
+// `volume` is a linear gain (1 = unchanged, 0-2 range in the UI) applied on
+// export and mirrored in the preview (clamped to the element's 0-1 range there).
+export const [muted, setMuted] = createSignal(false);
+export const [volume, setVolume] = createSignal(1);
+
 // Export state, driven by the ExportPanel.
 export const [exporting, setExporting] = createSignal(false);
 export const [exportError, setExportError] = createSignal("");
@@ -336,6 +342,9 @@ export async function loadVideo(path: string): Promise<void> {
     setLosslessMode(false);
     setKeyframes([]);
     refreshKeyframes(path);
+    // Audio defaults: unmuted, full volume.
+    setMuted(false);
+    setVolume(1);
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -393,6 +402,8 @@ export function closeVideo(): void {
   setResolutionId("source");
   setLosslessMode(false);
   setKeyframes([]);
+  setMuted(false);
+  setVolume(1);
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
@@ -605,17 +616,15 @@ export async function exportClip(): Promise<void> {
     setExportProgress(typeof e.payload === "number" ? e.payload : 0);
   });
   try {
-    await exportClipIpc(
-      input,
-      output,
-      start,
-      clipDuration,
-      lossless ? null : buildReframe(),
-      outputFormat(),
-      hwAccel(),
-      qualityTier(),
+    await exportClipIpc(input, output, start, clipDuration, {
+      reframe: lossless ? null : buildReframe(),
+      format: outputFormat(),
+      useHardware: hwAccel(),
+      tier: qualityTier(),
       lossless,
-    );
+      mute: muted(),
+      volume: volume(),
+    });
     setExportedPath(output);
   } catch (e) {
     setExportError(String(e));

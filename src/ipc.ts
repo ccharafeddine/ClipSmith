@@ -70,33 +70,46 @@ export interface CropRect {
   h: number;
 }
 
+/** Encode options for {@link exportClip}, mirroring the backend `ExportOptions`. */
+export interface ExportOptions {
+  /** Reframe canvas + fill, or `null` for an identity cut. Ignored when lossless. */
+  reframe: Reframe | null;
+  /** Output format id (`mp4`/`mov`/`mkv`/`webm`). Ignored when lossless. */
+  format: string;
+  /** Allow a detected hardware H.264 encoder. Ignored when lossless. */
+  useHardware: boolean;
+  /** Quality tier (`draft`/`balanced`/`high`). Ignored when lossless. */
+  tier: string;
+  /** Stream-copy instead of re-encoding (see below). */
+  lossless: boolean;
+  /** Drop the audio from the export. Ignored when lossless. */
+  mute: boolean;
+  /** Linear audio gain (1 = unchanged). Ignored when lossless. */
+  volume: number;
+}
+
 /**
- * Export the range `[start, start + duration)` of `input` to `output`, re-encoded
- * (libx264 / hardware / VP9) into the chosen `format`, optionally reframed into a
- * chosen output canvas (blur-fill / pad / crop-to-fill). `reframe` of `null`
- * means an identity export (v1's plain frame-accurate cut). `tier` sets the
- * quality level; any resolution cap is already baked into the reframe canvas
- * dimensions. When `lossless` is true the backend stream-copies instead (no
- * re-encode; `reframe`/`format`/`useHardware`/`tier` are ignored, and `start`
- * should already be keyframe-snapped). Emits "export-progress" events (0.0-1.0).
+ * Export the range `[start, start + duration)` of `input` to `output`. Normally a
+ * re-encode (libx264 / hardware / VP9) into `options.format`, optionally reframed
+ * and with audio mute/volume applied; a resolution cap is already baked into the
+ * reframe canvas dimensions. When `options.lossless` is true the backend
+ * stream-copies instead (no re-encode; reframe/format/encoder/tier/audio are
+ * ignored, and `start` should already be keyframe-snapped). Emits
+ * "export-progress" events (0.0-1.0) while running.
  */
 export function exportClip(
   input: string,
   output: string,
   start: number,
   duration: number,
-  reframe: Reframe | null,
-  format: string,
-  useHardware: boolean,
-  tier: string,
-  lossless: boolean,
+  options: ExportOptions,
 ): Promise<void> {
   return invoke<void>("export_clip", {
     input,
     output,
     start,
     duration,
-    options: { reframe: reframe ?? undefined, format, useHardware, tier, lossless },
+    options: { ...options, reframe: options.reframe ?? undefined },
   });
 }
 

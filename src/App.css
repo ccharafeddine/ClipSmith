@@ -943,6 +943,34 @@ button.export:hover:not(:disabled) {
   gap: var(--s2);
 }
 
+/* Audio: mute chip + volume slider + percentage readout on one row. */
+.audio-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.audio-volume {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.audio-volume:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.audio-value {
+  min-width: 3.5ch;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-num);
+  color: var(--fg-2);
+}
+
 .export-encoder {
   color: var(--fg-2);
   font-size: var(--fs-num);

@@ -144,9 +144,21 @@ pub struct ExportOptions {
     /// When true, stream-copy instead of re-encoding: instant and bit-identical,
     /// keeping the source container. The frontend only sets this for an identity
     /// cut (no reframe/scale) with `start` snapped to a keyframe, so `reframe`,
-    /// `format`, `use_hardware`, and `tier` are all ignored on this path.
+    /// `format`, `use_hardware`, `tier`, and the audio options are all ignored on
+    /// this path (the copy keeps the source audio verbatim).
     #[serde(default)]
     pub lossless: bool,
+    /// Drop the audio from the exported clip.
+    #[serde(default)]
+    pub mute: bool,
+    /// Linear audio gain (`1.0` = unchanged); ignored when muted.
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+}
+
+/// Serde default for [`ExportOptions::volume`]: unity gain (no change).
+fn default_volume() -> f32 {
+    1.0
 }
 
 /// Export the range `[start, start + duration)` of `input` to `output`. `start`
@@ -182,6 +194,10 @@ pub async fn export_clip(
         format: fmt,
         encoder,
         tier: options.tier,
+        audio: cutter::Audio {
+            mute: options.mute,
+            volume: options.volume,
+        },
     };
     cutter::cut(
         &app,

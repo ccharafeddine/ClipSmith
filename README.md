@@ -102,6 +102,8 @@ hardware is found. An **Auto / Software** toggle lets you force software.
   and you can still save anywhere
 - Looping playback between the trim handles, with the audio kept intact (the
   player doubles as the preview)
+- **Audio controls** — mute the clip or set its volume (0–200%); the preview
+  reflects both as you tweak them
 - **Clear** the loaded video without opening another
 - Dark, minimal interface that fits the window without scrolling
 - Native binaries for macOS and Windows
@@ -200,10 +202,11 @@ hardware encoders. The next release, **v2**, builds on reframe. Landed so far:
 3. ✅ **Lossless fast-path** — an opt-in **Lossless** export mode that
    stream-copies (`-c copy`): instant and bit-identical, keeping the source
    format, snapping the trim start to a keyframe (no reframe or re-encode).
+4. ✅ **Audio controls** — **Mute** and a per-clip **Volume** (0–200%) on the
+   export, mirrored live in the preview.
 
 Still ahead:
 
-4. **Audio controls** — mute and per-clip volume.
 5. **Subject-aware auto-reframe** — keep a moving subject in shot.
 
 On the horizon: code-signing + notarization, done across the app suite.

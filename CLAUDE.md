@@ -78,10 +78,10 @@ clipsmith/
 │   ├── styles.css                # CSS variables, theme tokens
 │   └── components/
 │       ├── DropZone.tsx
-│       ├── VideoPlayer.tsx       # keeps audio — do NOT mute; hosts the crop overlay
+│       ├── VideoPlayer.tsx       # audible by default; mirrors export mute/volume; hosts crop overlay
 │       ├── CropOverlay.tsx       # draggable/resizable crop rect over the stage
 │       ├── Timeline.tsx          # IN/OUT handles, both free and frame-accurate
-│       ├── ExportPanel.tsx       # format, quality tier, resolution, encoder, progress, Export
+│       ├── ExportPanel.tsx       # mode, format, quality, resolution, audio, encoder, progress, Export
 │       └── SettingsPanel.tsx     # gearwheel modal: version + update check + startup toggle
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -208,7 +208,7 @@ ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting**, **refr
 1. **Settings + auto-update.** *(shipped — see [## v2: Settings & auto-update](#v2-settings--auto-update))* A settings gearwheel opening a panel with the app version and an in-app update check against GitHub Releases. **Prompt-only**, never a silent install — the network call runs in Rust (`update.rs`), and on an available update the frontend opens the release page.
 2. **Export-quality presets.** *(shipped — see [## v2: Export quality](#v2-export-quality))* A **Quality** tier (Draft / Balanced / High) driving CRF + preset, and a **Resolution** cap (Source / 1080p / 720p / 480p), replacing the fixed CRF 18 / `preset medium`.
 3. **Optional lossless fast-path.** *(shipped — see [## v2: Lossless fast-path](#v2-lossless-fast-path))* An opt-in `-c copy` stream copy for identity (un-reframed) cuts: instant and bit-identical, keyframe-snapped.
-4. **Audio controls.** Mute and per-clip volume (later: extraction, channel selection).
+4. **Audio controls.** *(shipped — see [## v2: Audio controls](#v2-audio-controls))* Mute and per-clip volume (later: extraction, channel selection).
 5. **Subject-aware auto-reframe.** Keep a moving subject in shot (the Tier 2 work described under [## v2: Reframe](#v2-reframe)).
 
 On the horizon: **code-signing + notarization**, done suite-wide.
@@ -238,6 +238,13 @@ The third v2 step re-adds v1's original stream copy as an **opt-in export mode**
 - **Backend — `cutter::copy`.** `-ss {start} -i {input} -t {dur} -map 0 -c copy -avoid_negative_ts make_zero -y {output}`. `-ss` is **before** `-i` (fast seek); with `-c copy` the cut can only start on a keyframe, so ffmpeg seeks to the keyframe at/before `start` — the frontend snaps IN to a keyframe first, so it begins exactly there (this is why lossless is keyframe-quantised, not frame-accurate). `-map 0` keeps **all** streams (subs/attachments included) since the container is unchanged. The spawn + `time=` progress + bounded-stderr loop is now shared with the re-encode via `cutter::run`. `commands::ExportOptions.lossless` (serde default false) routes `export_clip` to `copy` before the codec pipeline; `reframe`/`format`/`use_hardware`/`tier` are ignored on that path. `copy_args` is unit-tested (seek-before-input, `-c copy`, no re-encode flags).
 - **Frontend.** `state.ts` adds `losslessMode` + `keyframes` (loaded via the revived `list_keyframes` on open — it was legacy/unused). `setLossless(true)` forces identity (resets reframe/crop/resolution) and calls `snapInToKeyframe()`; `nearestKeyframe(t)` finds the closest keyframe. `exportClip` uses the **source extension** for the output (a copy keeps the container) and passes `lossless`. `Timeline.tsx` snaps the IN handle to keyframes and draws subtle keyframe **ticks** (capped at 400 visible so a dense strip doesn't smear) while lossless. `ExportPanel.tsx` gains a **Mode** toggle (Re-encode / Lossless); lossless hides Format/Quality/Resolution/Encoder and shows a one-line explainer, and `App.tsx` hides the whole `ReframePanel`. So the transcode-only UI simply isn't present in lossless mode — no conflicting state to reconcile.
 - **Honesty.** The IN handle sits on the real start (a copy can't honour a sub-GOP IN), the ticks show the snap granularity, and the output keeps the source format/quality verbatim. If a source stream can't be copied back into its own container, ffmpeg's error surfaces as usual.
+
+## v2: Audio controls
+
+The fourth v2 step adds **Mute** and **Volume** to the export, mirrored in the preview. Both apply to the **re-encode path only**; lossless mode keeps the source audio verbatim and hides the controls (consistent with how it hides the other transcode-only fields).
+
+- **Backend — `cutter::Audio { mute, volume }`** (folded into `Encoding`). `Audio::args()` builds the audio mapping: muted → a bare `-an` (no audio stream); otherwise `-map 0:a?` (optional, so a video-only source is fine) plus `-af volume={gain}` when the gain isn't unity (clamped 0–8 defensively). `cut()` maps **video only** per filter branch now, then appends `audio.args()` — so mute/volume slot in identically for the no-filter, `-vf`, and `-filter_complex` paths. The `-af` is safe next to `-filter_complex` because the audio comes straight from `0:a?`, not from the (video-only) graph. The audio *codec* still comes from `OutputFormat::encode_args` and simply goes unused under `-an`. `commands::ExportOptions` gains `mute` (default false) and `volume` (serde default 1.0). Unit-tested (`Audio::args` for mute/volume/precedence).
+- **Frontend.** `state.ts` adds `muted`/`volume` signals (reset to unmuted/1 on load/close), threaded through the export. `ipc.ts` `exportClip` was refactored to take an **options object** (`ExportOptions`) instead of a long positional list, now carrying `mute`/`volume` too. `ExportPanel.tsx` gets an **Audio** field (a Mute chip + a 0–200% volume slider, disabled when muted), inside the re-encode-only block. `VideoPlayer.tsx` mirrors both onto the foreground `<video>` via a `createEffect` (`el.muted`, `el.volume` clamped to the element's 0–1 range, so a >100% boost previews at 100% while the export applies the real gain).
 
 ## v2: Reframe
 

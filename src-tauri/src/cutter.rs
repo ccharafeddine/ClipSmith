@@ -54,8 +54,8 @@ use crate::encoders::{QualityTier, VideoEncoder};
 use crate::formats::OutputFormat;
 
 /// The output encoding: target container/codecs, the H.264 encoder flavour (the
-/// encoder is ignored for non-H.264 formats like WebM), and the quality tier
-/// (the constant-quality level for whichever codec applies).
+/// encoder is ignored for non-H.264 formats like WebM), the quality tier (the
+/// constant-quality level for whichever codec applies), and the audio settings.
 ///
 /// Note there is no resolution field: a resolution cap is expressed purely as
 /// smaller [`Reframe`] canvas dimensions computed on the frontend (the single
@@ -65,6 +65,39 @@ pub struct Encoding {
     pub format: OutputFormat,
     pub encoder: VideoEncoder,
     pub tier: QualityTier,
+    pub audio: Audio,
+}
+
+/// Per-export audio settings. `mute` drops the audio entirely (`-an`); otherwise
+/// `volume` is a linear gain applied via the `volume` filter (`1.0` = unchanged).
+/// Only applies to the re-encode path — the lossless stream copy keeps the source
+/// audio verbatim.
+#[derive(Debug, Clone, Copy)]
+pub struct Audio {
+    pub mute: bool,
+    pub volume: f32,
+}
+
+impl Audio {
+    /// The audio mapping/filter args. Muted → a bare `-an` (no audio stream);
+    /// otherwise map all audio (`0:a?`, optional so a video-only source is fine)
+    /// and, when the gain isn't unity, apply the `volume` filter. Split out so it
+    /// can be unit-tested without spawning ffmpeg. The audio *codec* is appended
+    /// separately by [`OutputFormat::encode_args`] and is simply unused under
+    /// `-an`.
+    fn args(self) -> Vec<String> {
+        if self.mute {
+            return vec!["-an".into()];
+        }
+        let mut a = vec!["-map".into(), "0:a?".into()];
+        // Clamp defensively; the UI sends 0–2, but never trust the wire.
+        let vol = self.volume.clamp(0.0, 8.0);
+        if (vol - 1.0).abs() > 1e-3 {
+            a.push("-af".into());
+            a.push(format!("volume={vol:.3}"));
+        }
+        a
+    }
 }
 
 /// An optional crop rectangle, in source pixels. libx264 with yuv420p needs even
@@ -285,40 +318,36 @@ pub async fn cut(
         duration_s,
     ];
 
-    // Choose the video filter and the matching output mapping. A complex graph
-    // (blur) names its output `[v]`; simple chains (pad/crop) and the no-filter
-    // path both filter/keep the first video stream directly.
+    // Choose the video filter and map the video output. A complex graph (blur)
+    // names its output `[v]`; simple chains (pad/crop) and the no-filter path
+    // filter/keep the first video stream directly. Audio is mapped separately
+    // below (see `Audio::args`) so mute/volume slot in the same way for all three.
     let filter = reframe.map_or(VideoFilter::None, |r| r.to_filter());
     match &filter {
         VideoFilter::None => {
-            args.extend(
-                ["-map", "0:v:0", "-map", "0:a?"]
-                    .iter()
-                    .map(|s| (*s).to_string()),
-            );
+            args.extend(["-map", "0:v:0"].iter().map(|s| (*s).to_string()));
         }
         VideoFilter::Simple(vf) => {
             args.push("-vf".into());
             args.push(vf.clone());
-            args.extend(
-                ["-map", "0:v:0", "-map", "0:a?"]
-                    .iter()
-                    .map(|s| (*s).to_string()),
-            );
+            args.extend(["-map", "0:v:0"].iter().map(|s| (*s).to_string()));
         }
         VideoFilter::Complex(fc) => {
             args.push("-filter_complex".into());
             args.push(fc.clone());
-            args.extend(
-                ["-map", "[v]", "-map", "0:a?"]
-                    .iter()
-                    .map(|s| (*s).to_string()),
-            );
+            args.extend(["-map", "[v]"].iter().map(|s| (*s).to_string()));
         }
     }
 
+    // Audio mapping + optional mute/volume. The `-af volume=` filter is safe
+    // alongside `-filter_complex`: the audio stream is mapped straight from
+    // `0:a?`, not fed from the (video-only) complex graph, so it isn't the
+    // graph's output and simple audio filtering is allowed.
+    args.extend(encoding.audio.args());
+
     // Video + audio codecs, container flags, muxer, and output path — all chosen
     // by the target format (the H.264 encoder and quality tier are folded in).
+    // The audio codec is emitted here but goes unused when the audio is muted.
     args.extend(
         encoding
             .format
@@ -464,6 +493,43 @@ mod tests {
     fn rejects_na_time() {
         assert!(parse_progress_time("time=N/A bitrate=N/A").is_none());
         assert!(parse_progress_time("no timestamp here").is_none());
+    }
+
+    #[test]
+    fn audio_args_map_mute_and_volume() {
+        // Unmuted, unity gain → just map all audio, no filter.
+        let a = Audio {
+            mute: false,
+            volume: 1.0,
+        }
+        .args();
+        assert_eq!(a, vec!["-map", "0:a?"]);
+
+        // Muted → a bare -an, nothing mapped.
+        let m = Audio {
+            mute: true,
+            volume: 1.0,
+        }
+        .args();
+        assert_eq!(m, vec!["-an"]);
+
+        // A non-unity gain adds the volume filter.
+        let v = Audio {
+            mute: false,
+            volume: 1.5,
+        }
+        .args();
+        assert!(v.windows(2).any(|w| w == ["-map", "0:a?"]));
+        assert!(v.windows(2).any(|w| w == ["-af", "volume=1.500"]));
+
+        // Mute wins over any volume; never emits a filter.
+        let mv = Audio {
+            mute: true,
+            volume: 0.5,
+        }
+        .args();
+        assert_eq!(mv, vec!["-an"]);
+        assert!(!mv.iter().any(|s| s.starts_with("volume=")));
     }
 
     #[test]
