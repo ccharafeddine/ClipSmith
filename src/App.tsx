@@ -10,6 +10,7 @@ import {
   closeVideo,
   fileName,
   loadError,
+  losslessMode,
   meta,
   setInAtPlayhead,
   setOutAtPlayhead,
@@ -137,7 +138,9 @@ function App() {
                 {m().height} &middot; {(m().fps_num / m().fps_den).toFixed(2)} fps
                 &middot; {m().codec} &middot; {m().container}
               </p>
-              <ReframePanel />
+              <Show when={!losslessMode()}>
+                <ReframePanel />
+              </Show>
               <ExportPanel />
             </aside>
           </div>

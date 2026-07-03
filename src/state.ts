@@ -9,6 +9,7 @@ import {
   exportClip as exportClipIpc,
   defaultSavePath,
   detectEncoder,
+  listKeyframes,
   probeVideo,
   type CropRect,
   type VideoMeta,
@@ -102,6 +103,13 @@ export const [resolutionId, setResolutionId] = createSignal("source");
 export function resolutionCap(): number | null {
   return resolutionOption(resolutionId()).maxShorter;
 }
+
+// Lossless fast-path. When on, the export stream-copies (no re-encode): instant
+// and bit-identical, but it can't reframe/crop/scale/convert, so it forces an
+// identity cut and snaps the IN handle to a keyframe. `keyframes` are the source
+// video's keyframe timestamps (seconds), loaded on open, used for that snapping.
+export const [losslessMode, setLosslessMode] = createSignal(false);
+export const [keyframes, setKeyframes] = createSignal<number[]>([]);
 
 // Export state, driven by the ExportPanel.
 export const [exporting, setExporting] = createSignal(false);
@@ -324,6 +332,10 @@ export async function loadVideo(path: string): Promise<void> {
     // Quality/resolution default to v1 behaviour (near-lossless, source size).
     setQualityTier("high");
     setResolutionId("source");
+    // Lossless mode off by default; (re-)load the keyframes it snaps IN to.
+    setLosslessMode(false);
+    setKeyframes([]);
+    refreshKeyframes(path);
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -379,6 +391,8 @@ export function closeVideo(): void {
   setPadColor("#000000");
   setQualityTier("high");
   setResolutionId("source");
+  setLosslessMode(false);
+  setKeyframes([]);
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
@@ -409,6 +423,67 @@ export function refreshFormats(): void {
       if (!ids.includes(outputFormat())) setOutputFormat("mp4");
     })
     .catch(() => {});
+}
+
+/**
+ * Load the source's keyframe timestamps for lossless-mode IN snapping. Silent on
+ * failure — lossless still works (the backend's `-ss` snaps to a keyframe too),
+ * the handle just won't visibly snap.
+ */
+export function refreshKeyframes(path: string): void {
+  listKeyframes(path)
+    .then((ks) => {
+      // Ignore a late result if another video was loaded/closed meanwhile.
+      if (filePath() === path) setKeyframes(ks);
+    })
+    .catch(() => {});
+}
+
+/** The keyframe timestamp nearest to `t`, or `t` itself if none are loaded. */
+export function nearestKeyframe(t: number): number {
+  const ks = keyframes();
+  if (ks.length === 0) return t;
+  let best = ks[0];
+  let bestDist = Math.abs(t - best);
+  for (const k of ks) {
+    const d = Math.abs(t - k);
+    if (d < bestDist) {
+      best = k;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Snap the IN point to the nearest keyframe, kept strictly before OUT. Used by
+ * lossless mode so the handle sits where the stream copy will actually start
+ * (a copy can only begin on a keyframe).
+ */
+export function snapInToKeyframe(): void {
+  if (keyframes().length === 0) return;
+  const limit = Math.max(0, outPoint() - MIN_CLIP);
+  const snapped = Math.min(nearestKeyframe(inPoint()), limit);
+  setInPoint(snapped);
+  seekTo(snapped);
+}
+
+/**
+ * Toggle the lossless (stream-copy) export mode. Turning it on forces an
+ * identity cut — copy can't reframe, crop, scale, or convert — by resetting the
+ * reframe/resolution controls, and snaps IN to a keyframe so the handle matches
+ * where the copy will begin.
+ */
+export function setLossless(on: boolean): void {
+  setLosslessMode(on);
+  if (on) {
+    setReframeRatio("original");
+    setFillStrategy("blur");
+    setCropRect(null);
+    setCropMode(false);
+    setResolutionId("source");
+    snapInToKeyframe();
+  }
 }
 
 /**
@@ -479,23 +554,27 @@ export function buildReframe(): Reframe | null {
 }
 
 /**
- * Export the current trim range as a frame-accurate H.264/AAC mp4, optionally
- * reframed into a chosen output canvas (blur-fill / pad / crop-to-fill). Opens a
- * save dialog defaulting to `{source_stem}_clip.mp4` in the Exports folder, then
- * runs the libx264 re-encode while reflecting progress. No-op if no file is
- * loaded, an export is already in flight, or the user cancels the dialog. Output
- * is always `.mp4`, since the re-encode is no longer bound to the source
- * container.
+ * Export the current trim range. Normally a re-encode into the chosen format
+ * (optionally reframed); in **lossless** mode a stream copy into the source
+ * container (instant, bit-identical, no reframe). Opens a save dialog defaulting
+ * to `{source_stem}_clip.{ext}` in the Exports folder, then runs the export while
+ * reflecting progress. No-op if no file is loaded, an export is already in
+ * flight, or the user cancels the dialog.
  */
 export async function exportClip(): Promise<void> {
   const input = filePath();
   if (!input || exporting()) return;
 
+  const lossless = losslessMode();
   const start = inPoint();
   const clipDuration = outPoint() - start;
   if (clipDuration <= 0) return;
 
-  const ext = formatInfo(outputFormat()).id;
+  // Lossless keeps the source container (a copy can't change codecs); a
+  // re-encode uses the chosen output format.
+  const ext = lossless
+    ? extensionOf(input) || "mp4"
+    : formatInfo(outputFormat()).id;
   const name = fileName();
   const dot = name.lastIndexOf(".");
   const stem = dot === -1 ? name : name.slice(0, dot);
@@ -531,10 +610,11 @@ export async function exportClip(): Promise<void> {
       output,
       start,
       clipDuration,
-      buildReframe(),
+      lossless ? null : buildReframe(),
       outputFormat(),
       hwAccel(),
       qualityTier(),
+      lossless,
     );
     setExportedPath(output);
   } catch (e) {

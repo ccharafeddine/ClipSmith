@@ -76,7 +76,9 @@ export interface CropRect {
  * chosen output canvas (blur-fill / pad / crop-to-fill). `reframe` of `null`
  * means an identity export (v1's plain frame-accurate cut). `tier` sets the
  * quality level; any resolution cap is already baked into the reframe canvas
- * dimensions. Emits "export-progress" events (0.0-1.0) while running.
+ * dimensions. When `lossless` is true the backend stream-copies instead (no
+ * re-encode; `reframe`/`format`/`useHardware`/`tier` are ignored, and `start`
+ * should already be keyframe-snapped). Emits "export-progress" events (0.0-1.0).
  */
 export function exportClip(
   input: string,
@@ -87,13 +89,14 @@ export function exportClip(
   format: string,
   useHardware: boolean,
   tier: string,
+  lossless: boolean,
 ): Promise<void> {
   return invoke<void>("export_clip", {
     input,
     output,
     start,
     duration,
-    options: { reframe: reframe ?? undefined, format, useHardware, tier },
+    options: { reframe: reframe ?? undefined, format, useHardware, tier, lossless },
   });
 }
 

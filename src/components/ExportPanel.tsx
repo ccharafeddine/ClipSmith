@@ -11,12 +11,14 @@ import {
   fillStrategy,
   hwAccel,
   inPoint,
+  losslessMode,
   outPoint,
   outputFormat,
   qualityTier,
   reframeRatio,
   resolutionId,
   setHwAccel,
+  setLossless,
   setOutputFormat,
   setQualityTier,
   setResolutionId,
@@ -64,34 +66,76 @@ export default function ExportPanel() {
     <section class="export-panel">
       <div class="field">
         <span class="field-label">
-          Format
+          Mode
           <span
             class="info"
-            title="Container and codecs for the exported file. MP4 is the most compatible; MOV/MKV also carry H.264; WebM (VP9) is open and smaller. Changing this converts the clip."
+            title="Re-encode gives frame-accurate cuts plus reframing, quality, and format options. Lossless stream-copies instead — instant and bit-identical — but keeps the source format and can only trim on keyframes (no reframe, quality, or resolution change)."
           >
             ?
           </span>
         </span>
         <div class="chip-group">
-          <For each={availableFormatIds()}>
-            {(id) => (
-              <button
-                type="button"
-                class="chip"
-                classList={{ active: outputFormat() === id }}
-                aria-pressed={outputFormat() === id}
-                title={formatInfo(id).detail}
-                onClick={() => setOutputFormat(id)}
-              >
-                {formatInfo(id).label}
-              </button>
-            )}
-          </For>
+          <button
+            type="button"
+            class="chip"
+            classList={{ active: !losslessMode() }}
+            aria-pressed={!losslessMode()}
+            title="Re-encode (frame-accurate, reframe, quality, format)"
+            onClick={() => setLossless(false)}
+          >
+            Re-encode
+          </button>
+          <button
+            type="button"
+            class="chip"
+            classList={{ active: losslessMode() }}
+            aria-pressed={losslessMode()}
+            title="Stream copy (instant, bit-identical, keyframe-snapped)"
+            onClick={() => setLossless(true)}
+          >
+            Lossless
+          </button>
         </div>
-        <span class="export-encoder">{formatInfo(outputFormat()).detail}</span>
       </div>
 
-      <div class="field">
+      <Show when={losslessMode()}>
+        <p class="reframe-hint">
+          Stream copy — instant and bit-identical, keeping the source format. The
+          start snaps to a keyframe; no reframe, quality, or resolution change.
+        </p>
+      </Show>
+
+      <Show when={!losslessMode()}>
+        <div class="field">
+          <span class="field-label">
+            Format
+            <span
+              class="info"
+              title="Container and codecs for the exported file. MP4 is the most compatible; MOV/MKV also carry H.264; WebM (VP9) is open and smaller. Changing this converts the clip."
+            >
+              ?
+            </span>
+          </span>
+          <div class="chip-group">
+            <For each={availableFormatIds()}>
+              {(id) => (
+                <button
+                  type="button"
+                  class="chip"
+                  classList={{ active: outputFormat() === id }}
+                  aria-pressed={outputFormat() === id}
+                  title={formatInfo(id).detail}
+                  onClick={() => setOutputFormat(id)}
+                >
+                  {formatInfo(id).label}
+                </button>
+              )}
+            </For>
+          </div>
+          <span class="export-encoder">{formatInfo(outputFormat()).detail}</span>
+        </div>
+
+        <div class="field">
         <span class="field-label">
           Quality
           <span
@@ -145,7 +189,8 @@ export default function ExportPanel() {
             )}
           </For>
         </div>
-      </div>
+        </div>
+      </Show>
 
       <p class="export-summary">
         <span class="export-label">Clip</span>
@@ -162,7 +207,7 @@ export default function ExportPanel() {
         </Show>
       </p>
 
-      <Show when={isH264()}>
+      <Show when={!losslessMode() && isH264()}>
         <div class="field">
           <span class="field-label">
             Encoder

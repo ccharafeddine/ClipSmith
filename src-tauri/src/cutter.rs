@@ -1,9 +1,22 @@
-//! The cut: a frame-accurate `ffmpeg` re-encode subprocess (H.264 / AAC, mp4).
+//! The cut: an `ffmpeg` subprocess that trims (and optionally reframes) a clip.
 //!
-//! ClipSmith re-encodes every export with libx264 so the IN/OUT points are
-//! frame-accurate — not limited to keyframe boundaries — and an optional
-//! **reframe** can reshape the frame into a chosen output canvas. libx264 is GPL,
-//! which is why ClipSmith is GPL (see LICENSE).
+//! Two paths share the spawn + progress plumbing ([`run`]):
+//! - [`cut`] — the default **re-encode** (libx264 / hardware / VP9). The IN/OUT
+//!   points are frame-accurate (not limited to keyframe boundaries) and an
+//!   optional **reframe** can reshape the frame into a chosen output canvas.
+//!   libx264 is GPL, which is why ClipSmith is GPL (see LICENSE).
+//! - [`copy`] — the opt-in **lossless** stream copy (`-c copy`): near-instant and
+//!   bit-identical, keeping the source container, but keyframe-quantised and
+//!   unable to reframe. See its docs.
+//!
+//! For the re-encode the output is H.264 (mp4/mov/mkv) or VP9 (webm), chosen by
+//! the format; H.264 can't live in some source containers (e.g. `.webm`), and a
+//! reframe rewrites every pixel anyway, so binding the output to the source
+//! container no longer makes sense. The first video stream and all audio streams
+//! are kept; subtitles/attachments are dropped, since they can't always be
+//! carried into these containers (e.g. bitmap subs) and keeping them would make
+//! the export fail on those sources. (The lossless copy keeps *all* streams,
+//! since it stays in the source container.)
 //!
 //! The output is always mp4 (H.264 video + AAC audio): H.264 can't live in some
 //! source containers (e.g. `.webm`), and a reframe rewrites every pixel anyway, so
@@ -312,6 +325,69 @@ pub async fn cut(
             .encode_args(encoding.encoder, encoding.tier, output),
     );
 
+    run(app, args, duration).await
+}
+
+/// Stream-copy the range `[start, start + duration)` of `input` into `output`
+/// with **no re-encode** — near-instant and bit-identical. This is the opt-in
+/// lossless fast-path: it can't reframe, crop, scale, or change codecs, so the
+/// caller must only use it for an identity cut, and `output` keeps the source
+/// container (its codecs are copied as-is via `-map 0 -c copy`, subtitles and
+/// attachments included).
+///
+/// `-ss` is placed **before** `-i` for a fast seek. With `-c copy` the cut can
+/// only begin on a keyframe, so ffmpeg seeks to the keyframe at or before
+/// `start`; the frontend snaps the IN handle to a keyframe first, so `start` is
+/// already a keyframe timestamp and the copy begins exactly there. (This is why
+/// the lossless cut is keyframe-quantised rather than frame-accurate.)
+///
+/// Emits `export-progress` like [`cut`]. Errors identically.
+///
+/// # Errors
+/// Returns the trimmed ffmpeg stderr if the sidecar fails to spawn or exits with
+/// a non-zero status (e.g. a stream the source container can't copy back).
+pub async fn copy(
+    app: &tauri::AppHandle,
+    input: &str,
+    output: &str,
+    start: f64,
+    duration: f64,
+) -> Result<(), String> {
+    run(app, copy_args(input, output, start, duration), duration).await
+}
+
+/// Build the `-c copy` argument list. Split out so it can be unit-tested without
+/// spawning ffmpeg.
+fn copy_args(input: &str, output: &str, start: f64, duration: f64) -> Vec<String> {
+    vec![
+        "-ss".into(),
+        format!("{start:.6}"),
+        "-i".into(),
+        input.to_string(),
+        "-t".into(),
+        format!("{duration:.6}"),
+        "-map".into(),
+        "0".into(),
+        "-c".into(),
+        "copy".into(),
+        "-avoid_negative_ts".into(),
+        "make_zero".into(),
+        "-y".into(),
+        output.to_string(),
+    ]
+}
+
+/// Spawn the ffmpeg sidecar with `args`, stream its progress, and surface a
+/// failure reason. Shared by the re-encode ([`cut`]) and stream-copy ([`copy`])
+/// paths so both parse progress and report errors identically.
+///
+/// ffmpeg writes its periodic `frame=… time=…` progress to stderr; the final
+/// error summary (if it fails) goes there too. We parse progress against
+/// `duration` *and* keep a bounded tail of every stderr chunk — a single chunk
+/// can carry both a `time=` update and the real error text, so excluding
+/// progress lines could otherwise swallow the failure reason. On failure the
+/// error is at the tail.
+async fn run(app: &tauri::AppHandle, args: Vec<String>, duration: f64) -> Result<(), String> {
     let (mut rx, _child) = app
         .shell()
         .sidecar("ffmpeg")
@@ -320,11 +396,6 @@ pub async fn cut(
         .spawn()
         .map_err(|e| format!("failed to run ffmpeg: {e}"))?;
 
-    // ffmpeg writes its periodic `frame=… time=…` progress to stderr; the final
-    // error summary (if it fails) goes there too. We parse progress *and* keep a
-    // bounded tail of every stderr chunk — a single chunk can carry both a
-    // `time=` update and the real error text, so excluding progress lines could
-    // otherwise swallow the failure reason. On failure the error is at the tail.
     let mut errors = String::new();
     let total = duration.max(f64::MIN_POSITIVE);
     while let Some(event) = rx.recv().await {
@@ -393,6 +464,24 @@ mod tests {
     fn rejects_na_time() {
         assert!(parse_progress_time("time=N/A bitrate=N/A").is_none());
         assert!(parse_progress_time("no timestamp here").is_none());
+    }
+
+    #[test]
+    fn copy_args_are_stream_copy_with_seek_before_input() {
+        let a = copy_args("in.mkv", "out.mkv", 3.5, 10.0);
+        // -ss must come before -i for a fast keyframe seek.
+        let ss = a.iter().position(|s| s == "-ss").unwrap();
+        let i = a.iter().position(|s| s == "-i").unwrap();
+        assert!(ss < i, "-ss must precede -i for stream copy");
+        // Stream copy, all streams, source container inferred from the output.
+        assert!(a.windows(2).any(|w| w == ["-c", "copy"]));
+        assert!(a.windows(2).any(|w| w == ["-map", "0"]));
+        assert!(a.windows(2).any(|w| w == ["-t", "10.000000"]));
+        assert_eq!(a.last().unwrap(), "out.mkv");
+        // No re-encode flags leak in.
+        assert!(!a
+            .iter()
+            .any(|s| s == "libx264" || s == "-crf" || s == "-vf"));
     }
 
     #[test]

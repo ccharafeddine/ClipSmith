@@ -33,14 +33,23 @@ end points are exact to the frame — drag the handles anywhere, no keyframe
 snapping, no dead zones you can't trim through. Any **reframe** (blur-fill, pad,
 or crop) is applied in the same pass.
 
-For the H.264 formats it targets **CRF 18, `preset medium`** (visually
-near-lossless) with `libx264`, or a **hardware encoder** if you have one (see
-below). The trade-off versus a pure stream copy is that the export is not instant
-and not bit-identical to the source; a progress bar shows while it encodes, and a
-success state lets you reveal the file in Finder / Explorer.
+For the H.264 formats the **Quality** control ranges from **High** (CRF 18,
+`preset medium`, visually near-lossless) down to **Draft** (fast and small), and
+a **Resolution** control can cap the output (Source / 1080p / 720p / 480p). The
+encode runs on `libx264` or a **hardware encoder** if you have one (see below).
+The trade-off versus a pure stream copy is that the export is not instant and not
+bit-identical to the source; a progress bar shows while it encodes, and a success
+state lets you reveal the file in Finder / Explorer.
 
 MP4 is the default. The first video stream and all audio are kept; subtitles and
 attachments are not carried into the re-encoded file.
+
+**Lossless mode.** If you don't need frame-accurate cuts, reframing, or a format
+change, switch the export **Mode** to **Lossless**: ClipSmith stream-copies
+(`-c copy`) instead of re-encoding, so the export is near-instant and
+bit-identical to the source and keeps its original format and all streams. A
+stream copy can only begin on a keyframe, so the trim start snaps to the nearest
+keyframe (shown as ticks on the timeline).
 
 ## Reframe
 
@@ -188,11 +197,12 @@ hardware encoders. The next release, **v2**, builds on reframe. Landed so far:
 2. ✅ **Export-quality presets** — a **Quality** tier (Draft / Balanced / High)
    and a **Resolution** cap (Source / 1080p / 720p / 480p), replacing the fixed
    CRF 18 / `medium`.
+3. ✅ **Lossless fast-path** — an opt-in **Lossless** export mode that
+   stream-copies (`-c copy`): instant and bit-identical, keeping the source
+   format, snapping the trim start to a keyframe (no reframe or re-encode).
 
 Still ahead:
 
-3. **Optional lossless fast-path** — an opt-in `-c copy` stream copy for
-   uncropped, keyframe-aligned cuts where an instant, bit-identical export wins.
 4. **Audio controls** — mute and per-clip volume.
 5. **Subject-aware auto-reframe** — keep a moving subject in shot.
 

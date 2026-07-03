@@ -886,6 +886,19 @@ button.export:hover:not(:disabled) {
   pointer-events: none;
 }
 
+/* Keyframe ticks, shown in lossless mode so the user can see where the IN handle
+   snaps (a stream copy can only start on a keyframe). Subtle marks over the
+   strip; the `left` percentage is set inline. */
+.tl-keyframe {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--accent-2) 55%, transparent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 /* ---- Export panel ----------------------------------------------------- */
 
 /* .export-panel is a column via the shared .reframe-panel,.export-panel rule. */

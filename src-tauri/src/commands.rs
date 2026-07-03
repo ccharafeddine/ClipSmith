@@ -141,6 +141,12 @@ pub struct ExportOptions {
     pub use_hardware: bool,
     #[serde(default)]
     pub tier: QualityTier,
+    /// When true, stream-copy instead of re-encoding: instant and bit-identical,
+    /// keeping the source container. The frontend only sets this for an identity
+    /// cut (no reframe/scale) with `start` snapped to a keyframe, so `reframe`,
+    /// `format`, `use_hardware`, and `tier` are all ignored on this path.
+    #[serde(default)]
+    pub lossless: bool,
 }
 
 /// Export the range `[start, start + duration)` of `input` to `output`. `start`
@@ -158,6 +164,13 @@ pub async fn export_clip(
 ) -> Result<(), String> {
     reject_flaglike(&input)?;
     reject_flaglike(&output)?;
+
+    // Lossless fast-path: a plain stream copy, no re-encode. Skips the whole
+    // codec/reframe pipeline (which doesn't apply to a copy).
+    if options.lossless {
+        return cutter::copy(&app, &input, &output, start, duration).await;
+    }
+
     let fmt = OutputFormat::from_id(&options.format).unwrap_or(OutputFormat::Mp4);
     // Hardware encoding only applies to the H.264 formats; WebM is always VP9.
     let encoder = if fmt.uses_h264() && options.use_hardware {

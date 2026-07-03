@@ -1,11 +1,14 @@
-import { createEffect, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import {
   currentTime,
   duration,
   filePath,
   filmstripSrc,
   inPoint,
+  keyframes,
+  losslessMode,
   MIN_CLIP,
+  nearestKeyframe,
   outPoint,
   seekTo,
   setFilmstripSrc,
@@ -40,8 +43,9 @@ type DragKind = "in" | "out" | "playhead";
 
 // iOS-style trim strip with a zoomable view window. Drag the IN/OUT handles to
 // frame the clip; drag elsewhere to scrub. Scroll to zoom the visible window
-// (cursor-anchored, down to MIN_VIEW_SPAN). Both handles are free and
-// frame-accurate — the export re-encodes, so the cut isn't tied to keyframes.
+// (cursor-anchored, down to MIN_VIEW_SPAN). Both handles are normally free and
+// frame-accurate (the export re-encodes); in lossless mode the IN handle snaps
+// to keyframes (a stream copy can only start there), with keyframe ticks shown.
 export default function Timeline() {
   let track: HTMLDivElement | undefined;
 
@@ -94,9 +98,12 @@ export default function Timeline() {
     const apply = (clientX: number) => {
       const t = timeFromClientX(clientX);
       if (kind === "in") {
-        // IN is free and frame-accurate, kept strictly before OUT.
+        // IN is free and frame-accurate, kept strictly before OUT — except in
+        // lossless mode, where it snaps to a keyframe (a stream copy can only
+        // start there, so the handle shows the real start).
         const limit = Math.max(0, outPoint() - MIN_CLIP);
-        const next = clamp(t, 0, limit);
+        let next = clamp(t, 0, limit);
+        if (losslessMode()) next = clamp(nearestKeyframe(next), 0, limit);
         setInPoint(next);
         seekTo(next);
       } else if (kind === "out") {
@@ -137,6 +144,18 @@ export default function Timeline() {
     setViewEnd(newStart + newSpan);
   }
 
+  // Keyframe ticks (lossless mode only), limited to those in the visible window.
+  // If the window is packed with keyframes they'd smear into an unreadable bar,
+  // so past a cap we drop them (magnetic snapping still works either way).
+  const KEYFRAME_TICK_CAP = 400;
+  const visibleKeyframes = () => {
+    if (!losslessMode()) return [];
+    const s = viewStart();
+    const e = viewEnd();
+    const vis = keyframes().filter((k) => k >= s && k <= e);
+    return vis.length <= KEYFRAME_TICK_CAP ? vis : [];
+  };
+
   const playheadVisible = () =>
     currentTime() >= viewStart() && currentTime() <= viewEnd();
   const zoomed = () => viewSpan() < duration() - 1e-6;
@@ -172,6 +191,9 @@ export default function Timeline() {
           </Show>
           <div class="tl-dim tl-dim-left" />
           <div class="tl-dim tl-dim-right" />
+          <For each={visibleKeyframes()}>
+            {(k) => <div class="tl-keyframe" style={{ left: `${pct(k)}%` }} />}
+          </For>
           <div class="tl-selection" />
           <div
             class="tl-handle tl-handle-in"
