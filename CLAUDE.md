@@ -73,13 +73,15 @@ clipsmith/
 │   ├── App.tsx
 │   ├── state.ts                  # Solid signals: filePath, meta, keyframes, in, out
 │   ├── ipc.ts                    # Tauri invoke wrappers, typed
+│   ├── settings.ts               # settings/update signals + check-for-update logic
 │   ├── styles.css                # CSS variables, theme tokens
 │   └── components/
 │       ├── DropZone.tsx
 │       ├── VideoPlayer.tsx       # keeps audio — do NOT mute; hosts the crop overlay
 │       ├── CropOverlay.tsx       # draggable/resizable crop rect over the stage
 │       ├── Timeline.tsx          # IN/OUT handles, both free and frame-accurate
-│       └── ExportPanel.tsx       # clip duration, format (MP4), crop, progress bar, Export
+│       ├── ExportPanel.tsx       # clip duration, format (MP4), crop, progress bar, Export
+│       └── SettingsPanel.tsx     # gearwheel modal: version + update check + startup toggle
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
@@ -93,7 +95,8 @@ clipsmith/
 │       ├── commands.rs           # probe_video, list_keyframes, export_clip
 │       ├── probe.rs              # ffprobe JSON parse → VideoMeta
 │       ├── keyframes.rs          # ffprobe packet flags → Vec<f64> (legacy; unused for snapping)
-│       └── cutter.rs             # ffmpeg libx264 re-encode subprocess (+ crop, + progress)
+│       ├── cutter.rs             # ffmpeg libx264 re-encode subprocess (+ crop, + progress)
+│       └── update.rs             # check_for_update: GitHub Releases API + version compare
 ├── scripts/
 │   ├── fetch-ffmpeg.sh           # Windows: download GPL FFmpeg + ffprobe (libx264); on a Mac, delegates to build-ffmpeg-macos.sh
 │   └── build-ffmpeg-macos.sh     # compiles GPL FFmpeg + static libx264 from source for the host macOS arch
@@ -199,13 +202,25 @@ Built from scratch in an empty folder. Each step ends with something runnable. C
 
 ## Roadmap
 
-ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting** and **crop** are now shipped (the libx264 re-encode crossed the GPL "licensing gate" that this section once described as a future decision). Likely next steps:
+ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting**, **reframe** (the libx264 re-encode crossed the GPL "licensing gate"), **format conversion**, and **hardware encoders** are shipped as of v1.0.0. The next release, **v2**, is headlined by reframe and builds on it:
 
-1. **Export-quality presets.** Expose CRF / resolution / preset choices instead of the fixed CRF 18 / `preset medium`. Possibly a faster "draft" vs. "high quality" toggle.
-2. **Hardware encoders.** Offer `h264_videotoolbox` (macOS) / `h264_nvenc`/`h264_qsv`/`h264_amf` (Windows) for much faster encodes where available, falling back to libx264.
+1. **Settings + auto-update.** *(in progress — see [## v2: Settings & auto-update](#v2-settings--auto-update))* A settings gearwheel opening a panel with the app version and an in-app update check against GitHub Releases. **Prompt-only**, never a silent install — the network call runs in Rust (`update.rs`), and on an available update the frontend opens the release page.
+2. **Export-quality presets.** Expose CRF / resolution / preset choices instead of the fixed CRF 18 / `preset medium`, with a "draft" vs. "high quality" toggle.
 3. **Optional lossless fast-path.** Re-add the old `-c copy` stream-copy as an opt-in for un-cropped, keyframe-aligned cuts where instant + bit-identical matters. (The copy logic is easy to restore; see git history before the re-encode switch.)
-4. **Audio extraction**, mute, volume, channel selection.
-5. **Multiple clips + concatenation**, then **filters**, **transitions**, and a multi-track timeline.
+4. **Audio controls.** Mute and per-clip volume (later: extraction, channel selection).
+5. **Subject-aware auto-reframe.** Keep a moving subject in shot (the Tier 2 work described under [## v2: Reframe](#v2-reframe)).
+
+On the horizon: **code-signing + notarization**, done suite-wide.
+
+> **Removed:** *multiple clips + concatenation* is no longer a ClipSmith feature — it moved to a separate app, **ClipWeaver**. Filters, transitions, and a multi-track timeline are likewise out of scope; ClipSmith stays a focused single-clip cutter/reframer/converter.
+
+## v2: Settings & auto-update
+
+The first v2 step. A **settings gearwheel** at the top-right of the header (a 3-column grid keeps the wordmark centered) opens a modal settings panel. All network access lives in Rust, not the webview.
+
+- **Backend — `update.rs`.** A `check_for_update` Tauri command GETs `https://api.github.com/repos/ccharafeddine/ClipSmith/releases/latest` with a `User-Agent` (GitHub requires one) and `Accept: application/vnd.github+json`, reusing the existing `reqwest`/native-tls client from URL import. It compares `tag_name` against `env!("CARGO_PKG_VERSION")` via a numeric `(major, minor, patch)` tuple parse (`version_tuple`, so `1.10.0 > 1.9.0` and pre-release suffixes are ignored) and returns `UpdateInfo { current, latest, isNewer, notes, url }` (serde `camelCase`). Note the API's `releases/latest` skips **drafts and pre-releases**, so a freshly cut draft release won't show until it's published. Unit-tested (`version_tuple`, `is_newer`).
+- **Frontend.** `src/settings.ts` owns the session-scoped signals (`settingsOpen`, `appVersion`, `updateInfo`, `updateChecking`, `updateError`, `checkOnStartup`) plus `runUpdateCheck(silent)` and `initSettings()`. `components/SettingsPanel.tsx` is the modal: a version line (from Tauri `getVersion()`, so it shows offline), a **Check for updates** button (checking / up-to-date / update-available states), release notes + a **Download** button that opens the release page on an available update, and a **Check on startup** toggle persisted to `localStorage`. `initSettings()` (run on `onMount`) resolves the version and, if opted in, runs one **silent** startup check (errors swallowed so a failed check never interrupts). `Esc` closes the panel.
+- **Prompt-only.** ClipSmith never downloads or installs an update itself; the Download button opens the GitHub release page. Keep `Cargo.toml`/`tauri.conf.json`/`package.json` `version` in lockstep with the published git tag so the comparison is meaningful.
 
 ## v2: Reframe
 

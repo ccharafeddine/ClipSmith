@@ -4,6 +4,8 @@ import VideoPlayer from "./components/VideoPlayer";
 import ReframePanel from "./components/ReframePanel";
 import ExportPanel from "./components/ExportPanel";
 import Logo from "./components/Logo";
+import SettingsPanel from "./components/SettingsPanel";
+import { initSettings, settingsOpen, setSettingsOpen } from "./settings";
 import {
   closeVideo,
   fileName,
@@ -30,10 +32,18 @@ function isFormControl(el: EventTarget | null): boolean {
 }
 
 function App() {
+  // Resolve the app version and, if opted in, run a silent update check on launch.
+  onMount(initSettings);
+
   // Editor keyboard shortcuts (active once a video is loaded): I/O set the trim
   // IN/OUT at the playhead, Space toggles play, arrows step one frame.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Esc closes the settings panel (works with or without a loaded video).
+      if (e.key === "Escape" && settingsOpen()) {
+        setSettingsOpen(false);
+        return;
+      }
       if (isFormControl(e.target) || !meta()) return;
       switch (e.key) {
         case " ":
@@ -67,8 +77,30 @@ function App() {
   return (
     <main class="container">
       <header class="app-header">
+        {/* Three columns keep the logo centered while the gear sits top-right. */}
+        <span class="app-header-spacer" />
         <Logo />
+        <button
+          type="button"
+          class="settings-gear"
+          title="Settings"
+          aria-label="Settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path
+              fill="currentColor"
+              fill-rule="evenodd"
+              clip-rule="evenodd"
+              d="M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.57.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.74 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96c.5.38 1.05.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.57-.24 1.12-.56 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+            />
+          </svg>
+        </button>
       </header>
+
+      <Show when={settingsOpen()}>
+        <SettingsPanel />
+      </Show>
 
       <Show when={loadError()}>
         <p class="error">{loadError()}</p>

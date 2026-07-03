@@ -5,6 +5,7 @@ mod filmstrip;
 mod formats;
 mod keyframes;
 mod probe;
+mod update;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,7 +26,8 @@ pub fn run() {
             commands::generate_filmstrip,
             commands::generate_proxy,
             commands::download_video,
-            commands::cancel_download
+            commands::cancel_download,
+            update::check_for_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -3,12 +3,40 @@
 // in one place.
 
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { Reframe } from "./reframe";
 
 /** Reveal the exported file in the OS file manager (Finder / Explorer). */
 export function revealExport(path: string): Promise<void> {
   return revealItemInDir(path);
+}
+
+/** Open an external URL (e.g. the release page) in the default browser. */
+export function openExternal(url: string): Promise<void> {
+  return openUrl(url);
+}
+
+/** The result of an update check against GitHub Releases. */
+export interface UpdateInfo {
+  /** The running version, e.g. "1.0.0". */
+  current: string;
+  /** The latest published release tag (no leading "v"). */
+  latest: string;
+  /** Whether `latest` is strictly newer than `current`. */
+  isNewer: boolean;
+  /** Release notes (GitHub release body); may be empty. */
+  notes: string;
+  /** The release page URL to open for the download. */
+  url: string;
+}
+
+/**
+ * Ask the backend to check GitHub Releases for a newer ClipSmith. All network
+ * access happens in Rust; this just resolves to the comparison. Rejects with a
+ * user-facing message on a network / parse failure.
+ */
+export function checkForUpdate(): Promise<UpdateInfo> {
+  return invoke<UpdateInfo>("check_for_update");
 }
 
 export interface VideoMeta {
