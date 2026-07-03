@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   canvasDims,
+  capShorterSide,
   ratioValue,
   isPreset,
   barsAxis,
@@ -20,6 +21,39 @@ describe("ratioValue / isPreset", () => {
     expect(isPreset("4:5")).toBe(true);
     expect(isPreset("original")).toBe(false);
     expect(isPreset("freeform")).toBe(false);
+  });
+});
+
+describe("capShorterSide (resolution cap)", () => {
+  const even = (n: number) => n % 2 === 0;
+
+  it("null cap returns the dims unchanged (evened)", () => {
+    expect(capShorterSide([1920, 1080], null)).toEqual([1920, 1080]);
+    expect(capShorterSide([1921, 1081], null)).toEqual([1920, 1080]);
+  });
+
+  it("never upscales when the shorter side already fits", () => {
+    // Shorter side 1080 <= 1080 → unchanged.
+    expect(capShorterSide([1920, 1080], 1080)).toEqual([1920, 1080]);
+    // Shorter side 720 <= 1080 → unchanged (no enlarge to 1080).
+    expect(capShorterSide([1280, 720], 1080)).toEqual([1280, 720]);
+  });
+
+  it("caps the shorter side of a landscape frame (height)", () => {
+    // 1920x1080 capped to 720 shorter → 1280x720.
+    expect(capShorterSide([1920, 1080], 720)).toEqual([1280, 720]);
+  });
+
+  it("caps the shorter side of a portrait frame (width)", () => {
+    // 1080x1920 capped to 720 shorter → 720x1280.
+    expect(capShorterSide([1080, 1920], 720)).toEqual([720, 1280]);
+  });
+
+  it("keeps both dimensions even after scaling", () => {
+    const [w, h] = capShorterSide([1918, 1078], 480);
+    expect(even(w)).toBe(true);
+    expect(even(h)).toBe(true);
+    expect(Math.min(w, h)).toBe(480);
   });
 });
 

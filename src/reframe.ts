@@ -99,6 +99,26 @@ export function canvasDims(
   return [even(w), even(h)];
 }
 
+/**
+ * Downscale `[w, h]` so its **shorter side** is at most `maxShorter`, preserving
+ * aspect and rounding to even. Never upscales: if the shorter side already fits
+ * (or `maxShorter` is `null`), the dimensions are returned unchanged (evened).
+ *
+ * This is how a resolution cap is applied — uniformly to the output canvas — so
+ * "720p" means 720 on the shorter side regardless of orientation (720 tall for
+ * landscape, 720 wide for portrait), which matches how people read those labels.
+ */
+export function capShorterSide(
+  [w, h]: [number, number],
+  maxShorter: number | null,
+): [number, number] {
+  if (maxShorter === null) return [even(w), even(h)];
+  const shorter = Math.min(w, h);
+  if (shorter <= maxShorter) return [even(w), even(h)];
+  const scale = maxShorter / shorter;
+  return [even(w * scale), even(h * scale)];
+}
+
 /** The canvas aspect (w/h) to shape the preview stage to, for a preset. */
 export function canvasAspect(r: CanvasRatio, srcW: number, srcH: number): number {
   const [w, h] = canvasDims(r, srcW, srcH);

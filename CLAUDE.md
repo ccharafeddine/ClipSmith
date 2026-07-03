@@ -74,13 +74,14 @@ clipsmith/
 │   ├── state.ts                  # Solid signals: filePath, meta, keyframes, in, out
 │   ├── ipc.ts                    # Tauri invoke wrappers, typed
 │   ├── settings.ts               # settings/update signals + check-for-update logic
+│   ├── quality.ts                # quality-tier + resolution-cap display metadata
 │   ├── styles.css                # CSS variables, theme tokens
 │   └── components/
 │       ├── DropZone.tsx
 │       ├── VideoPlayer.tsx       # keeps audio — do NOT mute; hosts the crop overlay
 │       ├── CropOverlay.tsx       # draggable/resizable crop rect over the stage
 │       ├── Timeline.tsx          # IN/OUT handles, both free and frame-accurate
-│       ├── ExportPanel.tsx       # clip duration, format (MP4), crop, progress bar, Export
+│       ├── ExportPanel.tsx       # format, quality tier, resolution, encoder, progress, Export
 │       └── SettingsPanel.tsx     # gearwheel modal: version + update check + startup toggle
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -204,8 +205,8 @@ Built from scratch in an empty folder. Each step ends with something runnable. C
 
 ClipSmith grows toward an open-source CapCut. **Frame-accurate cutting**, **reframe** (the libx264 re-encode crossed the GPL "licensing gate"), **format conversion**, and **hardware encoders** are shipped as of v1.0.0. The next release, **v2**, is headlined by reframe and builds on it:
 
-1. **Settings + auto-update.** *(in progress — see [## v2: Settings & auto-update](#v2-settings--auto-update))* A settings gearwheel opening a panel with the app version and an in-app update check against GitHub Releases. **Prompt-only**, never a silent install — the network call runs in Rust (`update.rs`), and on an available update the frontend opens the release page.
-2. **Export-quality presets.** Expose CRF / resolution / preset choices instead of the fixed CRF 18 / `preset medium`, with a "draft" vs. "high quality" toggle.
+1. **Settings + auto-update.** *(shipped — see [## v2: Settings & auto-update](#v2-settings--auto-update))* A settings gearwheel opening a panel with the app version and an in-app update check against GitHub Releases. **Prompt-only**, never a silent install — the network call runs in Rust (`update.rs`), and on an available update the frontend opens the release page.
+2. **Export-quality presets.** *(shipped — see [## v2: Export quality](#v2-export-quality))* A **Quality** tier (Draft / Balanced / High) driving CRF + preset, and a **Resolution** cap (Source / 1080p / 720p / 480p), replacing the fixed CRF 18 / `preset medium`.
 3. **Optional lossless fast-path.** Re-add the old `-c copy` stream-copy as an opt-in for un-cropped, keyframe-aligned cuts where instant + bit-identical matters. (The copy logic is easy to restore; see git history before the re-encode switch.)
 4. **Audio controls.** Mute and per-clip volume (later: extraction, channel selection).
 5. **Subject-aware auto-reframe.** Keep a moving subject in shot (the Tier 2 work described under [## v2: Reframe](#v2-reframe)).
@@ -221,6 +222,14 @@ The first v2 step. A **settings gearwheel** at the top-right of the header (a 3-
 - **Backend — `update.rs`.** A `check_for_update` Tauri command GETs `https://api.github.com/repos/ccharafeddine/ClipSmith/releases/latest` with a `User-Agent` (GitHub requires one) and `Accept: application/vnd.github+json`, reusing the existing `reqwest`/native-tls client from URL import. It compares `tag_name` against `env!("CARGO_PKG_VERSION")` via a numeric `(major, minor, patch)` tuple parse (`version_tuple`, so `1.10.0 > 1.9.0` and pre-release suffixes are ignored) and returns `UpdateInfo { current, latest, isNewer, notes, url }` (serde `camelCase`). Note the API's `releases/latest` skips **drafts and pre-releases**, so a freshly cut draft release won't show until it's published. Unit-tested (`version_tuple`, `is_newer`).
 - **Frontend.** `src/settings.ts` owns the session-scoped signals (`settingsOpen`, `appVersion`, `updateInfo`, `updateChecking`, `updateError`, `checkOnStartup`) plus `runUpdateCheck(silent)` and `initSettings()`. `components/SettingsPanel.tsx` is the modal: a version line (from Tauri `getVersion()`, so it shows offline), a **Check for updates** button (checking / up-to-date / update-available states), release notes + a **Download** button that opens the release page on an available update, and a **Check on startup** toggle persisted to `localStorage`. `initSettings()` (run on `onMount`) resolves the version and, if opted in, runs one **silent** startup check (errors swallowed so a failed check never interrupts). `Esc` closes the panel.
 - **Prompt-only.** ClipSmith never downloads or installs an update itself; the Download button opens the GitHub release page. Keep `Cargo.toml`/`tauri.conf.json`/`package.json` `version` in lockstep with the published git tag so the comparison is meaningful.
+
+## v2: Export quality
+
+The second v2 step generalizes the fixed CRF 18 / `preset medium` encode into two independent export controls, both chip rows in the export panel. **The defaults reproduce v1 exactly** (High tier == CRF 18 / medium; Source resolution == no scaling), so an untouched export is byte-for-byte the pre-v2 output.
+
+- **Quality tier** — `QualityTier` (`draft` | `balanced` | `high`), **backend-owned**. `encoders.rs` maps each tier to a per-encoder constant-quality value (and, for libx264, an x264 preset): libx264 `(28, veryfast)` / `(23, medium)` / `(18, medium)`; VideoToolbox `-q:v` 40/50/60; NVENC `-cq` 28/23/19; QSV `-global_quality` 30/25/20; AMF `-qp` 28/24/20. `formats.rs` maps the tier to VP9 `-crf` 37/33/31 for WebM. `VideoEncoder::video_args` and `OutputFormat::{video_args,encode_args}` now take the tier and return `Vec<String>` (the quality number is dynamic). The flag *shape* is constant across tiers, so the hardware-encoder [`probe`] still validates with just the default (High) tier. Threaded through `cutter::Encoding { format, encoder, tier }` and `commands::ExportOptions.tier` (serde default = High). The HW quality values remain flagged for live/CI tuning (same MAINTAINER NOTE as the encoder knobs).
+- **Resolution cap** — Source / 1080p / 720p / 480p, **frontend-owned**, applied as smaller **canvas dimensions** so it composes with reframe for free and needs *zero* backend code (see the note on `cutter::Encoding` — there is deliberately no resolution field). `reframe.ts` `capShorterSide([w,h], maxShorter)` downscales so the **shorter side** ≤ the cap (720p = 720 tall for landscape, 720 wide for portrait), preserving aspect, rounding even, and **never upscaling** (a cap above the source is a no-op). `state.ts` `buildReframe()` folds the cap into every path: presets/freeform shrink their canvas (crop→scale downsizes); the **identity** case (`original` + no crop) stays `null` when the cap doesn't reduce, and otherwise emits a full-frame `crop` + scaled canvas — reusing the tested crop→scale path for a clean, bar-free downscale. Because the cap only changes canvas *size* (not aspect), the live preview is unaffected and still matches the export.
+- **Frontend.** `src/quality.ts` holds the display metadata + types (`QUALITY_TIERS`, `RESOLUTIONS`); `state.ts` adds `qualityTier`/`resolutionId` signals (+ `resolutionCap()`), reset to the v1 defaults on load/close; `ipc.ts` `exportClip` passes `tier` in `options`; `ExportPanel.tsx` renders the two chip rows. Unit-tested (`capShorterSide` on the frontend; tier→flag mappings on the backend).
 
 ## v2: Reframe
 

@@ -181,12 +181,16 @@ invoked as separate sidecar processes:
 ## Roadmap
 
 Shipped in v1.0.0: frame-accurate cutting, **reframe**, format conversion, and
-hardware encoders. The next release, **v2**, builds on reframe:
+hardware encoders. The next release, **v2**, builds on reframe. Landed so far:
 
-1. **Settings + auto-update** — a settings panel with an in-app update check
+1. ✅ **Settings + auto-update** — a settings panel with an in-app update check
    against GitHub Releases (prompt-only, never a silent install).
-2. **Export-quality presets** — expose CRF / resolution / preset instead of the
-   fixed CRF 18 / `medium`, with a draft-vs-HQ toggle.
+2. ✅ **Export-quality presets** — a **Quality** tier (Draft / Balanced / High)
+   and a **Resolution** cap (Source / 1080p / 720p / 480p), replacing the fixed
+   CRF 18 / `medium`.
+
+Still ahead:
+
 3. **Optional lossless fast-path** — an opt-in `-c copy` stream copy for
    uncropped, keyframe-aligned cuts where an instant, bit-identical export wins.
 4. **Audio controls** — mute and per-clip volume.

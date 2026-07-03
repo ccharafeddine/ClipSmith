@@ -71,11 +71,12 @@ export interface CropRect {
 }
 
 /**
- * Export the range `[start, start + duration)` of `input` to `output` as a
- * frame-accurate H.264/AAC mp4 (libx264 re-encode), optionally reframed into a
+ * Export the range `[start, start + duration)` of `input` to `output`, re-encoded
+ * (libx264 / hardware / VP9) into the chosen `format`, optionally reframed into a
  * chosen output canvas (blur-fill / pad / crop-to-fill). `reframe` of `null`
- * means an identity export (v1's plain frame-accurate cut). `output` is always
- * `.mp4`. Emits "export-progress" events (0.0-1.0) while running.
+ * means an identity export (v1's plain frame-accurate cut). `tier` sets the
+ * quality level; any resolution cap is already baked into the reframe canvas
+ * dimensions. Emits "export-progress" events (0.0-1.0) while running.
  */
 export function exportClip(
   input: string,
@@ -85,13 +86,14 @@ export function exportClip(
   reframe: Reframe | null,
   format: string,
   useHardware: boolean,
+  tier: string,
 ): Promise<void> {
   return invoke<void>("export_clip", {
     input,
     output,
     start,
     duration,
-    options: { reframe: reframe ?? undefined, format, useHardware },
+    options: { reframe: reframe ?? undefined, format, useHardware, tier },
   });
 }
 

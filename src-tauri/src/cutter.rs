@@ -37,15 +37,21 @@ use tauri::Emitter;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-use crate::encoders::VideoEncoder;
+use crate::encoders::{QualityTier, VideoEncoder};
 use crate::formats::OutputFormat;
 
-/// The output encoding: target container/codecs plus the H.264 encoder flavour
-/// (the encoder is ignored for non-H.264 formats like WebM).
+/// The output encoding: target container/codecs, the H.264 encoder flavour (the
+/// encoder is ignored for non-H.264 formats like WebM), and the quality tier
+/// (the constant-quality level for whichever codec applies).
+///
+/// Note there is no resolution field: a resolution cap is expressed purely as
+/// smaller [`Reframe`] canvas dimensions computed on the frontend (the single
+/// source of truth for output size), so the backend needs no separate knob.
 #[derive(Debug, Clone, Copy)]
 pub struct Encoding {
     pub format: OutputFormat,
     pub encoder: VideoEncoder,
+    pub tier: QualityTier,
 }
 
 /// An optional crop rectangle, in source pixels. libx264 with yuv420p needs even
@@ -299,8 +305,12 @@ pub async fn cut(
     }
 
     // Video + audio codecs, container flags, muxer, and output path — all chosen
-    // by the target format (the H.264 encoder is folded in for mp4/mov/mkv).
-    args.extend(encoding.format.encode_args(encoding.encoder, output));
+    // by the target format (the H.264 encoder and quality tier are folded in).
+    args.extend(
+        encoding
+            .format
+            .encode_args(encoding.encoder, encoding.tier, output),
+    );
 
     let (mut rx, _child) = app
         .shell()

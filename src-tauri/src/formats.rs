@@ -23,7 +23,7 @@
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 
-use crate::encoders::VideoEncoder;
+use crate::encoders::{QualityTier, VideoEncoder};
 
 /// An output container + its codecs. `id()` doubles as the file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,27 +73,30 @@ impl OutputFormat {
         }
     }
 
-    /// Video codec + quality args. H.264 formats defer to the chosen encoder
-    /// (libx264 or hardware); WebM uses constant-quality VP9. `-pix_fmt yuv420p`
-    /// keeps every target broadly compatible.
-    pub fn video_args(self, encoder: VideoEncoder) -> Vec<String> {
+    /// Video codec + quality args for the chosen [`QualityTier`]. H.264 formats
+    /// defer to the chosen encoder (libx264 or hardware); WebM uses
+    /// constant-quality VP9 with a per-tier CRF. `-pix_fmt yuv420p` keeps every
+    /// target broadly compatible.
+    pub fn video_args(self, encoder: VideoEncoder, tier: QualityTier) -> Vec<String> {
         if self.uses_h264() {
-            return encoder
-                .video_args()
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect();
+            return encoder.video_args(tier);
         }
-        // WebM: VP9 in constant-quality mode (`-b:v 0` + `-crf`). `good`/cpu-used
-        // 2 and row multithreading trade a little speed for quality; VP9 software
-        // is inherently slower than H.264.
+        // WebM: VP9 in constant-quality mode (`-b:v 0` + `-crf`). VP9 CRF runs
+        // higher-numbered than x264 for similar quality; High keeps v1's 31.
+        // `good`/cpu-used 2 and row multithreading trade a little speed for
+        // quality; VP9 software is inherently slower than H.264.
+        let crf = match tier {
+            QualityTier::Draft => "37",
+            QualityTier::Balanced => "33",
+            QualityTier::High => "31",
+        };
         [
             "-c:v",
             "libvpx-vp9",
             "-b:v",
             "0",
             "-crf",
-            "31",
+            crf,
             "-deadline",
             "good",
             "-cpu-used",
@@ -126,9 +129,15 @@ impl OutputFormat {
     }
 
     /// The full tail of the ffmpeg command: video, audio, container flags, muxer,
-    /// and the output path. `encoder` is ignored for non-H.264 formats.
-    pub fn encode_args(self, encoder: VideoEncoder, output: &str) -> Vec<String> {
-        let mut args = self.video_args(encoder);
+    /// and the output path. `encoder` is ignored for non-H.264 formats; `tier`
+    /// sets the constant-quality level for whichever codec applies.
+    pub fn encode_args(
+        self,
+        encoder: VideoEncoder,
+        tier: QualityTier,
+        output: &str,
+    ) -> Vec<String> {
+        let mut args = self.video_args(encoder, tier);
         args.extend(self.audio_args().iter().map(|s| (*s).to_string()));
         args.extend(self.container_args().iter().map(|s| (*s).to_string()));
         args.extend(
@@ -226,7 +235,7 @@ mod tests {
 
     #[test]
     fn h264_formats_use_the_encoder_and_aac() {
-        let args = OutputFormat::Mkv.encode_args(VideoEncoder::X264, "out.mkv");
+        let args = OutputFormat::Mkv.encode_args(VideoEncoder::X264, QualityTier::High, "out.mkv");
         assert!(args.windows(2).any(|w| w == ["-c:v", "libx264"]));
         assert!(args.windows(2).any(|w| w == ["-c:a", "aac"]));
         assert!(args.windows(2).any(|w| w == ["-f", "matroska"]));
@@ -236,7 +245,7 @@ mod tests {
 
     #[test]
     fn mp4_gets_faststart() {
-        let args = OutputFormat::Mp4.encode_args(VideoEncoder::X264, "out.mp4");
+        let args = OutputFormat::Mp4.encode_args(VideoEncoder::X264, QualityTier::High, "out.mp4");
         assert!(args.windows(2).any(|w| w == ["-movflags", "+faststart"]));
         assert!(args.windows(2).any(|w| w == ["-f", "mp4"]));
     }
@@ -244,10 +253,25 @@ mod tests {
     #[test]
     fn webm_uses_vp9_opus_regardless_of_encoder() {
         // Even if a hardware H.264 encoder is passed, WebM stays VP9/Opus.
-        let args = OutputFormat::Webm.encode_args(VideoEncoder::Nvenc, "out.webm");
+        let args =
+            OutputFormat::Webm.encode_args(VideoEncoder::Nvenc, QualityTier::High, "out.webm");
         assert!(args.windows(2).any(|w| w == ["-c:v", "libvpx-vp9"]));
         assert!(args.windows(2).any(|w| w == ["-c:a", "libopus"]));
         assert!(args.windows(2).any(|w| w == ["-f", "webm"]));
         assert!(!args.iter().any(|a| a == "libx264" || a == "h264_nvenc"));
+    }
+
+    #[test]
+    fn webm_crf_tracks_the_quality_tier() {
+        let crf_of = |tier| {
+            let args = OutputFormat::Webm.video_args(VideoEncoder::X264, tier);
+            args.windows(2)
+                .find(|w| w[0] == "-crf")
+                .map(|w| w[1].clone())
+                .unwrap()
+        };
+        assert_eq!(crf_of(QualityTier::High), "31");
+        assert_eq!(crf_of(QualityTier::Balanced), "33");
+        assert_eq!(crf_of(QualityTier::Draft), "37");
     }
 }

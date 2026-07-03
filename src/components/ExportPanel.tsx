@@ -13,12 +13,17 @@ import {
   inPoint,
   outPoint,
   outputFormat,
+  qualityTier,
   reframeRatio,
+  resolutionId,
   setHwAccel,
   setOutputFormat,
+  setQualityTier,
+  setResolutionId,
 } from "../state";
 import { isPreset, ratioLabel } from "../reframe";
 import { formatInfo } from "../formats";
+import { QUALITY_TIERS, RESOLUTIONS, qualityInfo } from "../quality";
 import { formatDuration } from "../format";
 import { revealExport } from "../ipc";
 
@@ -84,6 +89,62 @@ export default function ExportPanel() {
           </For>
         </div>
         <span class="export-encoder">{formatInfo(outputFormat()).detail}</span>
+      </div>
+
+      <div class="field">
+        <span class="field-label">
+          Quality
+          <span
+            class="info"
+            title="How hard the encoder works. High is visually near-lossless (larger files); Balanced trades a little quality for much smaller files; Draft is fastest and smallest for quick shares. Applies to every format."
+          >
+            ?
+          </span>
+        </span>
+        <div class="chip-group">
+          <For each={QUALITY_TIERS}>
+            {(q) => (
+              <button
+                type="button"
+                class="chip"
+                classList={{ active: qualityTier() === q.id }}
+                aria-pressed={qualityTier() === q.id}
+                title={q.detail}
+                onClick={() => setQualityTier(q.id)}
+              >
+                {q.label}
+              </button>
+            )}
+          </For>
+        </div>
+        <span class="export-encoder">{qualityInfo(qualityTier()).detail}</span>
+      </div>
+
+      <div class="field">
+        <span class="field-label">
+          Resolution
+          <span
+            class="info"
+            title="Caps the output's shorter side (720p = 720 tall for landscape, 720 wide for portrait). Only downscales — never enlarges beyond the source — so a cap above the source size is a no-op."
+          >
+            ?
+          </span>
+        </span>
+        <div class="chip-group">
+          <For each={RESOLUTIONS}>
+            {(res) => (
+              <button
+                type="button"
+                class="chip"
+                classList={{ active: resolutionId() === res.id }}
+                aria-pressed={resolutionId() === res.id}
+                onClick={() => setResolutionId(res.id)}
+              >
+                {res.label}
+              </button>
+            )}
+          </For>
+        </div>
       </div>
 
       <p class="export-summary">

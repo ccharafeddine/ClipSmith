@@ -17,12 +17,14 @@ import { formatInfo } from "./formats";
 import {
   canvasAspect,
   canvasDims,
+  capShorterSide,
   isPreset,
   type Anchor,
   type CanvasRatio,
   type FillStrategy,
   type Reframe,
 } from "./reframe";
+import { resolutionOption, type QualityTier } from "./quality";
 
 /** Video container extensions ClipSmith will open. */
 export const ALLOWED_EXTENSIONS = [
@@ -87,6 +89,19 @@ export const [availableFormatIds, setAvailableFormatIds] = createSignal<string[]
 // detected best encoder's name, shown so the user knows what Auto resolved to.
 export const [hwAccel, setHwAccel] = createSignal(true);
 export const [encoderLabel, setEncoderLabel] = createSignal("");
+
+// Export quality. `qualityTier` maps to a CRF/preset the backend picks per codec
+// ("high" == v1's CRF 18 / medium, the default). `resolutionId` selects an output
+// resolution cap; it's applied on the frontend as smaller canvas dimensions, so
+// preview and export agree (see `buildReframe`). Both default to the pre-v2
+// behaviour (near-lossless, source resolution).
+export const [qualityTier, setQualityTier] = createSignal<QualityTier>("high");
+export const [resolutionId, setResolutionId] = createSignal("source");
+
+/** The current resolution cap (shorter side, px), or `null` for source size. */
+export function resolutionCap(): number | null {
+  return resolutionOption(resolutionId()).maxShorter;
+}
 
 // Export state, driven by the ExportPanel.
 export const [exporting, setExporting] = createSignal(false);
@@ -306,6 +321,9 @@ export async function loadVideo(path: string): Promise<void> {
     setFillStrategy("blur");
     setReframeAnchor("center");
     setPadColor("#000000");
+    // Quality/resolution default to v1 behaviour (near-lossless, source size).
+    setQualityTier("high");
+    setResolutionId("source");
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -359,6 +377,8 @@ export function closeVideo(): void {
   setFillStrategy("blur");
   setReframeAnchor("center");
   setPadColor("#000000");
+  setQualityTier("high");
+  setResolutionId("source");
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
@@ -393,24 +413,46 @@ export function refreshFormats(): void {
 
 /**
  * Build the reframe payload for the current settings, or `null` for an identity
- * export (v1's plain frame-accurate cut). `original` is always identity;
- * `freeform` is identity until a crop box exists, then it's an unconstrained
- * crop (output == rect). Presets emit a fill strategy over a computed canvas.
+ * export (v1's plain frame-accurate cut). `original` is identity unless a
+ * resolution cap downscales it; `freeform` is identity until a crop box exists,
+ * then it's an unconstrained crop (output == rect); presets emit a fill strategy
+ * over a computed canvas. Any resolution cap is folded into the canvas
+ * dimensions here (the single source of truth for output size), so the preview
+ * and the export always agree and the backend needs no separate resolution knob.
  */
 export function buildReframe(): Reframe | null {
   const m = meta();
   if (!m) return null;
   const ratio = reframeRatio();
+  const cap = resolutionCap();
 
-  if (ratio === "original") return null;
+  if (ratio === "original") {
+    // No cap (or the source already fits) → true identity (v1's no-filter cut).
+    if (cap === null || Math.min(m.width, m.height) <= cap) return null;
+    // A downscale of an un-reframed clip: crop the full frame (a no-op) and let
+    // the backend scale it to the capped canvas. Reuses the tested crop→scale
+    // path and produces a clean downscale with no bars.
+    const [canvasW, canvasH] = capShorterSide([m.width, m.height], cap);
+    return {
+      canvasW,
+      canvasH,
+      strategy: "crop",
+      anchor: "center",
+      padColor: padColor(),
+      crop: { x: 0, y: 0, w: m.width, h: m.height },
+    };
+  }
 
   if (ratio === "freeform") {
     const crop = cropRect();
     if (!crop) return null;
     // Canvas == crop dims → backend emits a plain `crop=` (v1 lossless framing).
+    // A resolution cap shrinks the canvas below the rect, so the backend then
+    // scales the cropped region down (crop→scale) instead.
+    const [canvasW, canvasH] = capShorterSide([crop.w, crop.h], cap);
     return {
-      canvasW: crop.w,
-      canvasH: crop.h,
+      canvasW,
+      canvasH,
       strategy: "crop",
       anchor: "center",
       padColor: padColor(),
@@ -419,7 +461,10 @@ export function buildReframe(): Reframe | null {
   }
 
   if (!isPreset(ratio)) return null;
-  const [canvasW, canvasH] = canvasDims(ratio, m.width, m.height);
+  const [canvasW, canvasH] = capShorterSide(
+    canvasDims(ratio, m.width, m.height),
+    cap,
+  );
   const strategy = fillStrategy();
   return {
     canvasW,
@@ -489,6 +534,7 @@ export async function exportClip(): Promise<void> {
       buildReframe(),
       outputFormat(),
       hwAccel(),
+      qualityTier(),
     );
     setExportedPath(output);
   } catch (e) {

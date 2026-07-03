@@ -10,7 +10,7 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 use crate::cutter;
-use crate::encoders::{self, VideoEncoder};
+use crate::encoders::{self, QualityTier, VideoEncoder};
 use crate::filmstrip;
 use crate::formats::{self, OutputFormat};
 use crate::keyframes;
@@ -127,9 +127,11 @@ pub async fn list_keyframes(app: tauri::AppHandle, path: String) -> Result<Vec<f
 ///
 /// Encode options for [`export_clip`], grouped so the command stays within a
 /// sane argument count. `reframe` reshapes the frame (blur-fill / pad /
-/// crop-to-fill; see [`cutter::Reframe`]); `format` is the output
+/// crop-to-fill; see [`cutter::Reframe`]) and also carries any resolution
+/// downscale as smaller canvas dimensions; `format` is the output
 /// container/codecs id (`mp4`/`mov`/`mkv`/`webm`); `use_hardware` picks a
-/// detected hardware encoder for the H.264 formats (ignored for WebM).
+/// detected hardware encoder for the H.264 formats (ignored for WebM); `tier`
+/// is the export quality level (defaults to High == v1's CRF 18 / `medium`).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportOptions {
@@ -137,6 +139,8 @@ pub struct ExportOptions {
     pub reframe: Option<cutter::Reframe>,
     pub format: String,
     pub use_hardware: bool,
+    #[serde(default)]
+    pub tier: QualityTier,
 }
 
 /// Export the range `[start, start + duration)` of `input` to `output`. `start`
@@ -164,6 +168,7 @@ pub async fn export_clip(
     let encoding = cutter::Encoding {
         format: fmt,
         encoder,
+        tier: options.tier,
     };
     cutter::cut(
         &app,
