@@ -34,4 +34,8 @@ reqwest = { version = "0.12", default-features = false, features = ["native-tls"
 # select!/sleep to race a download against a cancel flag so a stalled URL fetch
 # can be aborted promptly. tokio is already in the tree via tauri.
 tokio = { version = "1", features = ["time", "macros"] }
+# Subject-aware auto-reframe (v2 Tier 2): pure-Rust ONNX inference for the
+# bundled face/person detectors. tract compiles into the binary — no native
+# ONNX Runtime lib to bundle per platform. MIT/Apache-2.0, GPL-3.0-compatible.
+tract-onnx = "0.23"
 

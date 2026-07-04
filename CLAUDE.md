@@ -91,16 +91,19 @@ clipsmith/
 │   │   ├── ffmpeg-aarch64-apple-darwin
 │   │   ├── ffmpeg-x86_64-apple-darwin
 │   │   └── ffprobe-...           # same target triples
+│   ├── models/                   # ONNX detectors (Ultraface, NanoDet-Plus), fetched, gitignored
 │   └── src/
 │       ├── main.rs
 │       ├── commands.rs           # probe_video, list_keyframes, export_clip
 │       ├── probe.rs              # ffprobe JSON parse → VideoMeta
 │       ├── keyframes.rs          # ffprobe packet flags → Vec<f64> (legacy; unused for snapping)
 │       ├── cutter.rs             # ffmpeg libx264 re-encode subprocess (+ crop, + progress)
-│       └── update.rs             # check_for_update: GitHub Releases API + version compare
+│       ├── update.rs             # check_for_update: GitHub Releases API + version compare
+│       └── detect.rs             # tract ONNX subject detection (auto-reframe; M0 spike so far)
 ├── scripts/
 │   ├── fetch-ffmpeg.sh           # Windows: download GPL FFmpeg + ffprobe (libx264); on a Mac, delegates to build-ffmpeg-macos.sh
-│   └── build-ffmpeg-macos.sh     # compiles GPL FFmpeg + static libx264 from source for the host macOS arch
+│   ├── build-ffmpeg-macos.sh     # compiles GPL FFmpeg + static libx264 from source for the host macOS arch
+│   └── fetch-models.sh           # download the ONNX detector models (auto-reframe) into src-tauri/models
 └── .github/workflows/
     └── release.yml               # tauri-action, builds on tag
 ```
@@ -113,6 +116,7 @@ There is no `PreviewModal.tsx`: the player doubles as the preview. `CropOverlay.
 # First-time setup
 npm install
 bash scripts/fetch-ffmpeg.sh
+bash scripts/fetch-models.sh   # ONNX detectors for auto-reframe (bundled as resources)
 
 # Dev (hot reload frontend, recompile Rust on change)
 npm run tauri dev
@@ -313,7 +317,32 @@ Frontend fixes: export result/error state is cleared on a direct video switch; t
 
 Known/accepted: `tauri.conf.json` keeps `csp: null` and a broad `assetProtocol.scope` — the app plays arbitrary local videos through the asset protocol and loads no remote content, so a strict CSP is a deferred hardening item rather than a shipped one (getting media-src wrong silently breaks playback on a platform that can't be dev-tested here).
 
-**Tier 2 — subject-aware crop-to-fill.** The first feature that must *understand* the video, so treat it like CaptionSmith's whisper integration, not a filter. Bundled local face detector via ONNX Runtime (`ort`, MIT) — **not** Ultralytics YOLO (AGPL). Two-phase like transcription: a cancellable **analyze** pass samples frames, runs detection, and builds a temporally-smoothed (low-pass/eased) center-path; the **encode** then drives a time-varying `crop`. Pan smoothly within a shot; **hard-cut** across scene changes (detect cheaply with `select='gt(scene,…)'`); on no detection, hold last position / center (never lurch). Ideally the smoothed path is previewable and nudgeable before committing.
+**Tier 2 — subject-aware crop-to-fill.** *(planned — not yet started; decisions locked with the user)* The first feature that must *understand* the video, so treat it like CaptionSmith's whisper integration, not a filter. It slots into the reframe model as **Crop-to-fill → Auto** (vs today's Manual box) and is the last v2 item; expect ~5–6 sessions.
+
+**Locked decisions.**
+- **Runtime: `tract` 0.23** (sonos, pure-Rust, MIT/Apache) — *not* `ort`/ONNX Runtime. `tract` compiles the inference engine into the binary, so there's **no per-platform native ONNX Runtime lib to bundle** (no extra CI fetch, no extra mac-signing). It's slower than ORT, which is irrelevant for an offline, cancellable, progress-barred analyze pass. (This supersedes the earlier `ort` sketch.) Still **not** Ultralytics YOLO (AGPL). *M0 finding: `tract` **0.21** rejected NanoDet's `Resize` node (`coordinate_transformation_mode: pytorch_half_pixel`); **0.23** loads both models cleanly, so the version floor is 0.23 — no model surgery / no Python in the pipeline.*
+- **Detection: faces + people.** A tiny face detector (**Ultraface RFB-320**, MIT, ~1.2MB) *and* a small person detector (**NanoDet-Plus-m 416**, Apache-2.0, ~4.8MB, COCO — person = class 0). Both are **raw-output** (ClipSmith decodes boxes + runs NMS in Rust, keeping the ONNX graphs op-simple so `tract` loads them) and validated end-to-end in M0 (output shapes: Ultraface `[1,4420,2]` scores + `[1,4420,4]` boxes; NanoDet `[1,3598,112]` = 80 classes + DFL 4×8 box regression). Bundled as read-only Tauri **resources** (`models/*.onnx`, fetched by `scripts/fetch-models.sh`, gitignored — not a runtime temp file, so the zero-intermediate-files rule is untouched). Subject arbitration per frame: prefer a confident **face** (framed head-and-shoulders), else the largest/most-central **person** box, with a lightweight IoU/nearest-centroid **tracker** so the target doesn't flip between people frame-to-frame; on neither, hold. All licenses are GPL-3.0-compatible.
+- **Scope: apply + live preview overlay** (a moving crop box drawn on the preview, synced to playback, so the path is trustable before export). **No** manual keyframe editing or nudge in v1 (deferred).
+
+**Architecture — the key split is two cache layers:**
+```
+ANALYZE (expensive, ratio-independent) → raw detections: [(t, cx, cy, w, h, score, kind)]
+BUILD PATH (cheap, ratio-dependent)    → smoothed crop path: control points [(t, x, y)]
+ENCODE (the existing re-encode pass)   → crop=cw:ch:x(t):y(t),scale=canvas
+```
+Detection runs **once**; changing the canvas ratio only rebuilds the (cheap) path from cached detections — no re-detection.
+
+**Time-varying crop mechanism.** The `crop` filter's `x`/`y` take per-frame `t`-expressions. Build `x(t)`/`y(t)` as **piecewise-linear interpolation over Douglas-Peucker-simplified control points** (nested `if(between(t,…),lerp(…),…)`), with **hard cuts** at scene changes encoded as coincident points. Frame-accurate, smooth, and **inline in the filtergraph — no temp file** (respects zero-intermediate-files); simplification bounds the expression to tens of points. Fallback if it's ever unwieldy: inline `sendcmd` driving crop commands. Scene cuts come from a cheap `select='gt(scene,T)'` pass; on detection gaps hold-last then ease to center (never lurch).
+
+**Milestones (each committable/testable):**
+0. **Runtime spike. *(shipped)*** `tract-onnx` 0.23 added; both models fetched (`scripts/fetch-models.sh`) + bundled as resources (`tauri.conf.json`, gitignored, release-workflow fetch step); `detect.rs` spike loads+optimizes+runs **both** models in `tract` (2 tests, skip when models absent so the CI check job stays green). De-risked the whole runtime: pure-Rust compile, op-coverage (the 0.21→0.23 Resize fix), and output shapes. Next: real frame decode → detect.
+1. **Analyze pass (`analyze.rs`).** Pipe frames from ffmpeg at ~2–4 fps, downscaled (reuse `filmstrip.rs`'s `set_raw_out(true)` rawvideo pattern), run both detectors, associate/track the subject, collect raw detections. Cancellable (URL-import `AtomicBool` pattern) + `analyze-progress` events.
+2. **Path building (pure, unit-tested).** Scene-cut segmentation, per-shot low-pass/ease, hold-last/recenter on gaps, in-frame clamping, control-point simplification, hard-cut insertion → the crop path.
+3. **Time-varying encode.** Extend `cutter::Reframe` to carry the path; build the `crop=…:x(t):y(t),scale=…` expression; wire through `export_clip`. End-to-end working here. Unit-test the expression builder.
+4. **UI.** Under Crop-to-fill add **Manual | Auto (subject)**; Auto runs analyze (progress + cancel like URL import), caches raw detections, shows status ("tracked N subjects across M shots"); ratio changes rebuild the path from cache without re-detecting.
+5. **Preview overlay.** Draw the moving crop box on the preview synced to `currentTime`.
+
+**Risks/mitigations:** native-lib bundling → eliminated by `tract`; expression size/perf → Douglas-Peucker simplification (+ sendcmd fallback); non-face subjects → person detector + hold-center; `tract` speed → offline/cancellable/progress; model op-coverage → M0 spike gates the person-model pick.
 
 ### Conventions specific to v2
 

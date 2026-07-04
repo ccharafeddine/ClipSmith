@@ -1,5 +1,6 @@
 mod commands;
 mod cutter;
+mod detect;
 mod encoders;
 mod filmstrip;
 mod formats;

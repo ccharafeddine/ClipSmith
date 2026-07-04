@@ -8,3 +8,7 @@ Exports/
 # CI must run the fetch script before building.
 src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
+
+# ONNX detector models for auto-reframe — fetched by scripts/fetch-models.sh,
+# never committed (binary, ~6MB). CI must run the fetch before bundling.
+src-tauri/models/*.onnx

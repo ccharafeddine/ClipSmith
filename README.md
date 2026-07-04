@@ -152,6 +152,10 @@ bash scripts/build-ffmpeg-macos.sh  # macOS: compile GPL FFmpeg from source with
 # yt-dlp goes stale as sites change their players).
 bash scripts/fetch-ytdlp.sh
 
+# Provide the bundled ONNX detector models for subject-aware auto-reframe
+# (Ultraface + NanoDet-Plus, run in-process with pure-Rust tract).
+bash scripts/fetch-models.sh
+
 # Run in development
 npm run tauri dev
 
@@ -186,6 +190,11 @@ invoked as separate sidecar processes:
 - **yt-dlp** (Unlicense / public domain), used only for URL import. Bundled as a
   sidecar and refreshed per release via `scripts/fetch-ytdlp.sh`. Source:
   <https://github.com/yt-dlp/yt-dlp>.
+- **ONNX detector models** for subject-aware auto-reframe, run in-process with the
+  pure-Rust [`tract`](https://github.com/sonos/tract) engine (MIT/Apache-2.0):
+  [Ultraface](https://github.com/onnx/models) face detector (MIT) and
+  [NanoDet-Plus](https://github.com/RangiLyu/nanodet) person detector
+  (Apache-2.0). Fetched by `scripts/fetch-models.sh` and bundled as app resources.
 - **Font**: Syne (SIL Open Font License), bundled in `src/assets/fonts` with its
   license file. No web-font requests are made.
 

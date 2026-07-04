@@ -64,6 +64,12 @@ jobs:
         shell: bash
         run: bash scripts/fetch-ytdlp.sh
 
+      # ONNX detector models (auto-reframe) are bundled as resources, so the
+      # bundle step needs them present. Platform-independent — one fetch per host.
+      - name: Fetch detector models
+        shell: bash
+        run: bash scripts/fetch-models.sh
+
       - name: Build and publish draft release
         uses: tauri-apps/tauri-action@v0
         env:
