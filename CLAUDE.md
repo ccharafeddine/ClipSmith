@@ -75,6 +75,7 @@ clipsmith/
 │   ├── ipc.ts                    # Tauri invoke wrappers, typed
 │   ├── settings.ts               # settings/update signals + check-for-update logic
 │   ├── quality.ts                # quality-tier + resolution-cap display metadata
+│   ├── autoReframe.ts            # auto-reframe path building (M2): detections → smoothed crop path
 │   ├── styles.css                # CSS variables, theme tokens
 │   └── components/
 │       ├── DropZone.tsx
@@ -337,7 +338,7 @@ Detection runs **once**; changing the canvas ratio only rebuilds the (cheap) pat
 **Milestones (each committable/testable):**
 0. **Runtime spike. *(shipped)*** `tract-onnx` 0.23 added; both models fetched (`scripts/fetch-models.sh`) + bundled as resources (`tauri.conf.json`, gitignored, release-workflow fetch step); `detect.rs` spike loads+optimizes+runs **both** models in `tract` (2 tests, skip when models absent so the CI check job stays green). De-risked the whole runtime: pure-Rust compile, op-coverage (the 0.21→0.23 Resize fix), and output shapes. Next: real frame decode → detect.
 1. **Analyze pass (`analyze.rs`).** Pipe frames from ffmpeg at ~2–4 fps, downscaled (reuse `filmstrip.rs`'s `set_raw_out(true)` rawvideo pattern), run both detectors, associate/track the subject, collect raw detections. Cancellable (URL-import `AtomicBool` pattern) + `analyze-progress` events.
-2. **Path building (pure, unit-tested).** Scene-cut segmentation, per-shot low-pass/ease, hold-last/recenter on gaps, in-frame clamping, control-point simplification, hard-cut insertion → the crop path.
+2. **Path building. *(shipped)*** Pure, unit-tested, and deliberately in **TypeScript** (`src/autoReframe.ts`) — the crop path is cheap and ratio-*dependent*, so it lives with the other frontend geometry (`reframe.ts`) where a canvas-ratio change re-smooths it instantly (no re-detection, no IPC) and it feeds the M5 preview directly; the compact control points get passed to the backend for the M3 crop, exactly like canvas dims. Pipeline: `cropWindow` (largest canvas-aspect box in the source → one free pan axis) → `selectSubject` (face over person, salience = score·√area, plus a proximity tracker so the target doesn't flip between people) → `buildRawCenters` (clamp into window, hold-last on gaps — never lurch) → `smooth` (per-shot EMA, hard-cut re-snap at scene boundaries) → `simplify` (Douglas-Peucker control-point thinning) → `CropPath { winW, winH, points }`. 15 vitest cases. *Scene-cut **detection** (the cheap `select='gt(scene,T)'` ffmpeg pass) is wired in M3; the builder already consumes the cut times.*
 3. **Time-varying encode.** Extend `cutter::Reframe` to carry the path; build the `crop=…:x(t):y(t),scale=…` expression; wire through `export_clip`. End-to-end working here. Unit-test the expression builder.
 4. **UI.** Under Crop-to-fill add **Manual | Auto (subject)**; Auto runs analyze (progress + cancel like URL import), caches raw detections, shows status ("tracked N subjects across M shots"); ratio changes rebuild the path from cache without re-detecting.
 5. **Preview overlay.** Draw the moving crop box on the preview synced to `currentTime`.

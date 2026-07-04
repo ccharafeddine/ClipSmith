@@ -1,0 +1,251 @@
+// Subject-aware auto-reframe, phase two (v2 Tier 2, M2): turn the analyze pass's
+// raw per-frame detections into a smoothed crop path.
+//
+// Pure geometry, deliberately on the frontend (like `reframe.ts`'s canvas math):
+// detection is expensive and ratio-independent (done once in Rust), but the crop
+// path is cheap and ratio-*dependent*, so rebuilding it when the canvas ratio
+// changes must be instant and client-side. The resulting control points are
+// handed to the backend for the time-varying `crop` (M3) and drive the live
+// preview overlay (M5) — one source of truth for both.
+//
+// The model: for a preset canvas the crop window is the largest canvas-aspect
+// rectangle that fits the source, so only its *center* pans along the one free
+// axis (the other is pinned). We pick a subject per frame (face first, else
+// person), track it so the target doesn't flip between people, hold position on
+// gaps (never lurch), smooth within a shot, hard-cut across scene changes, and
+// simplify to a compact set of control points.
+
+import type { Detection, SubjectFrame } from "./ipc";
+
+/** A crop-window center at time `t`, in normalized source coords (0-1). */
+export interface CropPoint {
+  t: number;
+  cx: number;
+  cy: number;
+}
+
+/** The panning crop window: normalized size + which axis is free to move. */
+export interface CropWindow {
+  winW: number;
+  winH: number;
+  freeAxis: "x" | "y" | "none";
+}
+
+/** A built crop path: the (fixed) window size plus its center over time. */
+export interface CropPath {
+  winW: number;
+  winH: number;
+  points: CropPoint[];
+}
+
+/** Options for {@link buildCropPath}; all have sensible defaults. */
+export interface PathOptions {
+  /** Scene-cut times (seconds); the path hard-cuts (re-snaps) at each. */
+  sceneCuts?: number[];
+  /** EMA smoothing factor (0-1); lower = smoother/laggier. */
+  alpha?: number;
+  /** Douglas-Peucker tolerance (normalized) for control-point thinning. */
+  epsilon?: number;
+}
+
+const boxArea = (d: Detection): number =>
+  Math.max(0, d.x2 - d.x1) * Math.max(0, d.y2 - d.y1);
+
+const boxCenter = (d: Detection): { cx: number; cy: number } => ({
+  cx: (d.x1 + d.x2) / 2,
+  cy: (d.y1 + d.y2) / 2,
+});
+
+/** Standalone salience: confident *and* large subjects win. */
+const salience = (d: Detection): number => d.score * Math.sqrt(boxArea(d));
+
+// How strongly proximity to the previously-tracked center is preferred over
+// raw salience, so the target sticks to one subject instead of flipping.
+const TRACK_LAMBDA = 1.5;
+
+const dist = (
+  a: { cx: number; cy: number },
+  b: { cx: number; cy: number },
+): number => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+
+/**
+ * The panning crop window for a source/canvas aspect pair. If the canvas is
+ * narrower than the source the window is full-height and pans horizontally; if
+ * taller, full-width and pans vertically; if they match, no panning.
+ */
+export function cropWindow(sourceAr: number, canvasAr: number): CropWindow {
+  if (Math.abs(sourceAr - canvasAr) < 1e-4) {
+    return { winW: 1, winH: 1, freeAxis: "none" };
+  }
+  if (canvasAr < sourceAr) {
+    return { winW: canvasAr / sourceAr, winH: 1, freeAxis: "x" };
+  }
+  return { winW: 1, winH: sourceAr / canvasAr, freeAxis: "y" };
+}
+
+/**
+ * Choose the subject to track in one frame: prefer faces (already
+ * confidence-thresholded in the backend) over persons. With a previous center,
+ * balance salience against proximity to it (the tracker); without one, take the
+ * most salient. Returns `null` when there's nothing to track.
+ */
+export function selectSubject(
+  frame: SubjectFrame,
+  prev: { cx: number; cy: number } | null,
+): Detection | null {
+  const pool = frame.faces.length ? frame.faces : frame.persons;
+  if (!pool.length) return null;
+  const rank = prev
+    ? (d: Detection) => salience(d) - TRACK_LAMBDA * dist(boxCenter(d), prev)
+    : (d: Detection) => salience(d);
+  return pool.reduce((best, d) => (rank(d) > rank(best) ? d : best));
+}
+
+const clamp = (v: number, lo: number, hi: number): number =>
+  Math.min(hi, Math.max(lo, v));
+
+/** Clamp a center so the crop window stays fully inside the source frame. */
+function clampCenter(cx: number, cy: number, win: CropWindow): CropPoint {
+  const hx = win.winW / 2;
+  const hy = win.winH / 2;
+  // Only the free axis moves; the other is pinned to the frame center.
+  return {
+    t: 0,
+    cx: win.freeAxis === "x" ? clamp(cx, hx, 1 - hx) : 0.5,
+    cy: win.freeAxis === "y" ? clamp(cy, hy, 1 - hy) : 0.5,
+  };
+}
+
+/**
+ * Raw per-frame crop centers: select + track a subject each frame, clamp it into
+ * the window, and hold the last center when a frame has no subject (so a
+ * detection gap glides instead of snapping to center). Both axes are returned
+ * but only the free one varies.
+ */
+export function buildRawCenters(
+  frames: SubjectFrame[],
+  win: CropWindow,
+): CropPoint[] {
+  const out: CropPoint[] = [];
+  let prev: { cx: number; cy: number } | null = null;
+  let held: CropPoint = clampCenter(0.5, 0.5, win); // default: centered
+  for (const frame of frames) {
+    const subject = selectSubject(frame, prev);
+    if (subject) {
+      const c = boxCenter(subject);
+      held = clampCenter(c.cx, c.cy, win);
+      prev = { cx: held.cx, cy: held.cy };
+    }
+    out.push({ t: frame.t, cx: held.cx, cy: held.cy });
+  }
+  return out;
+}
+
+/**
+ * Exponential-moving-average smoothing of the free axis, restarted (hard cut) at
+ * each scene boundary so a pan doesn't smear a shot change. `sceneCuts` are
+ * ascending times; a point at/after the next cut snaps to its raw value.
+ */
+export function smooth(
+  points: CropPoint[],
+  sceneCuts: number[],
+  alpha: number,
+  freeAxis: "x" | "y" | "none",
+): CropPoint[] {
+  if (freeAxis === "none" || points.length === 0) return points.slice();
+  const key = freeAxis === "x" ? "cx" : "cy";
+  const cuts = [...sceneCuts].sort((a, b) => a - b);
+  let cutIdx = 0;
+  let s = points[0][key];
+  const out: CropPoint[] = [];
+  let firstOfShot = true;
+  for (const p of points) {
+    // Advance past any scene cuts we've reached; the next point restarts the EMA.
+    let cut = false;
+    while (cutIdx < cuts.length && p.t >= cuts[cutIdx]) {
+      cutIdx += 1;
+      cut = true;
+    }
+    if (cut || firstOfShot) {
+      s = p[key];
+      firstOfShot = false;
+    } else {
+      s = alpha * p[key] + (1 - alpha) * s;
+    }
+    out.push({ ...p, [key]: s });
+  }
+  return out;
+}
+
+/** Perpendicular distance from point `p` to the segment `a`-`b` in (t, v) space. */
+function perpDist(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+): number {
+  const [ax, ay] = a;
+  const [bx, by] = b;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return Math.hypot(p[0] - ax, p[1] - ay);
+  // |cross product| / |segment length|.
+  return Math.abs((p[0] - ax) * dy - (p[1] - ay) * dx) / len;
+}
+
+/**
+ * Douglas-Peucker simplification of the free-axis path in (t, value) space,
+ * thinning the per-frame points to a compact set of control points (endpoints
+ * always kept) so the backend's `crop` expression stays small.
+ */
+export function simplify(
+  points: CropPoint[],
+  epsilon: number,
+  freeAxis: "x" | "y" | "none",
+): CropPoint[] {
+  if (freeAxis === "none" || points.length <= 2) return points.slice();
+  const key = freeAxis === "x" ? "cx" : "cy";
+  const pts: [number, number][] = points.map((p) => [p.t, p[key]]);
+
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop()!;
+    let maxD = -1;
+    let idx = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const d = perpDist(pts[i], pts[lo], pts[hi]);
+      if (d > maxD) {
+        maxD = d;
+        idx = i;
+      }
+    }
+    if (maxD > epsilon && idx !== -1) {
+      keep[idx] = true;
+      stack.push([lo, idx], [idx, hi]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+/**
+ * Build the full crop path for a set of per-frame detections against a target
+ * canvas: window → tracked raw centers → smoothed (scene-cut aware) → simplified
+ * control points. Returns `null` if there are no frames.
+ */
+export function buildCropPath(
+  frames: SubjectFrame[],
+  sourceAr: number,
+  canvasAr: number,
+  opts: PathOptions = {},
+): CropPath | null {
+  if (frames.length === 0) return null;
+  const win = cropWindow(sourceAr, canvasAr);
+  const raw = buildRawCenters(frames, win);
+  const smoothed = smooth(raw, opts.sceneCuts ?? [], opts.alpha ?? 0.15, win.freeAxis);
+  const points = simplify(smoothed, opts.epsilon ?? 0.005, win.freeAxis);
+  return { winW: win.winW, winH: win.winH, points };
+}
