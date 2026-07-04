@@ -162,6 +162,45 @@ export function generateProxy(path: string): Promise<string> {
   return invoke<string>("generate_proxy", { path });
 }
 
+/** A detection box in normalized source coordinates (0-1) with confidence. */
+export interface Detection {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  score: number;
+}
+
+/** Per-frame subject detections from the analyze pass (auto-reframe). */
+export interface SubjectFrame {
+  t: number;
+  faces: Detection[];
+  persons: Detection[];
+}
+
+/**
+ * Analyze a video for subjects (auto-reframe, phase one): sample it at `fps`
+ * (default 3), detect per frame, and resolve to per-frame detections. `duration`
+ * (seconds) drives the progress estimate. Emits "analyze-progress" (0.0-1.0);
+ * cancel with {@link cancelAnalyze}.
+ */
+export function analyzeSubject(
+  input: string,
+  duration: number,
+  fps?: number,
+): Promise<SubjectFrame[]> {
+  return invoke<SubjectFrame[]>("analyze_subject", {
+    input,
+    duration,
+    fps: fps ?? null,
+  });
+}
+
+/** Request the in-progress analyze pass to abort. */
+export function cancelAnalyze(): Promise<void> {
+  return invoke<void>("cancel_analyze");
+}
+
 /**
  * Build the timeline preview strip for a video and resolve to a PNG data URI
  * (no file is written to disk). `durationSecs` comes from the probe; `count` is

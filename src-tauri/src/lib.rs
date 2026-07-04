@@ -1,3 +1,4 @@
+mod analyze;
 mod commands;
 mod cutter;
 mod detect;
@@ -15,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::DownloadCancel::default())
+        .manage(analyze::AnalyzeCancel::default())
         .manage(encoders::EncoderCache::default())
         .manage(formats::FormatCache::default())
         .invoke_handler(tauri::generate_handler![
@@ -28,7 +30,9 @@ pub fn run() {
             commands::generate_proxy,
             commands::download_video,
             commands::cancel_download,
-            update::check_for_update
+            update::check_for_update,
+            analyze::analyze_subject,
+            analyze::cancel_analyze
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
