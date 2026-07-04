@@ -24,8 +24,12 @@ export const CANVAS_RATIOS = [
 ] as const;
 export type CanvasRatio = (typeof CANVAS_RATIOS)[number];
 
-/** How the source fills the canvas. Mirrors `cutter::Strategy`. */
-export type FillStrategy = "blur" | "pad" | "crop";
+/**
+ * How the source fills the canvas. `blur`/`pad`/`crop` mirror `cutter::Strategy`;
+ * `auto` is a UI-only mode of crop-to-fill (subject-aware) that resolves to a
+ * `crop` strategy carrying a time-varying [`AutoPath`] in the export payload.
+ */
+export type FillStrategy = "blur" | "pad" | "crop" | "auto";
 
 /**
  * Where the fitted source sits along the axis that has bars: top/center/bottom
@@ -248,4 +252,24 @@ export interface Reframe {
   anchor: Anchor;
   padColor: string;
   crop: CropRect | null;
+  /** Subject-aware auto crop-to-fill path (source px); omitted otherwise. */
+  auto?: AutoPath | null;
+}
+
+/** One control point of an {@link AutoPath} axis: value `v` (px) at time `t` (s). */
+export interface AutoPoint {
+  t: number;
+  v: number;
+}
+
+/**
+ * A time-varying crop window for auto-reframe, matching `cutter::AutoPath`:
+ * fixed window size (`cropW`×`cropH`, source px) and its top-left corner over
+ * time (`x`/`y` control points, source px, times clip-relative).
+ */
+export interface AutoPath {
+  cropW: number;
+  cropH: number;
+  x: AutoPoint[];
+  y: AutoPoint[];
 }

@@ -1,5 +1,10 @@
-import { For, Show } from "solid-js";
+import { For, Match, Show, Switch } from "solid-js";
 import {
+  autoAnalyzing,
+  autoDetections,
+  autoError,
+  autoProgress,
+  cancelAutoAnalyze,
   chooseRatio,
   chooseStrategy,
   fillStrategy,
@@ -28,6 +33,11 @@ const STRATEGIES: { value: FillStrategy; label: string; hint: string }[] = [
   { value: "blur", label: "Blur", hint: "Blurred, zoomed copy fills the bars" },
   { value: "pad", label: "Pad", hint: "Solid-color bars" },
   { value: "crop", label: "Crop", hint: "Scale up and crop to the canvas" },
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Track the subject and pan the crop automatically",
+  },
 ];
 
 export default function ReframePanel() {
@@ -112,7 +122,50 @@ export default function ReframePanel() {
           </div>
         </Show>
 
-        <Show when={axis() && fillStrategy() !== "crop"}>
+        <Show when={fillStrategy() === "auto"}>
+          <div class="field">
+            <span class="field-label">
+              Subject tracking
+              <span
+                class="info"
+                title="Auto analyzes the video for faces and people, then pans the crop to keep the subject in frame — smoothly within a shot, cutting at scene changes. Analysis runs once per video."
+              >
+                ?
+              </span>
+            </span>
+            <Switch>
+              <Match when={autoAnalyzing()}>
+                <div class="controls">
+                  <span class="export-encoder">
+                    Analyzing… {Math.round(autoProgress() * 100)}%
+                  </span>
+                  <button
+                    type="button"
+                    class="chip"
+                    onClick={() => cancelAutoAnalyze()}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </Match>
+              <Match when={autoError()}>
+                <span class="error">{autoError()}</span>
+              </Match>
+              <Match when={autoDetections()}>
+                <span class="export-encoder">
+                  Tracked — the export pans to follow the subject.
+                </span>
+              </Match>
+              <Match when={true}>
+                <span class="export-encoder">
+                  Analyzing the video to follow the subject…
+                </span>
+              </Match>
+            </Switch>
+          </div>
+        </Show>
+
+        <Show when={axis() && fillStrategy() !== "crop" && fillStrategy() !== "auto"}>
           <div class="field">
             <span class="field-label">
               Position

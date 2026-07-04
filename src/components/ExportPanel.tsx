@@ -62,7 +62,14 @@ export default function ExportPanel() {
     }
     if (!isPreset(r)) return "";
     const s = fillStrategy();
-    const strat = s === "pad" ? "Pad" : s === "crop" ? "Crop" : "Blur";
+    const strat =
+      s === "pad"
+        ? "Pad"
+        : s === "crop"
+          ? "Crop"
+          : s === "auto"
+            ? "Auto"
+            : "Blur";
     return `${ratioLabel(r)} · ${strat}`;
   };
 

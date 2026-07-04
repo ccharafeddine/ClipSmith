@@ -5,15 +5,19 @@ import { createSignal } from "solid-js";
 import { save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
+  analyzeSubject,
   availableFormats as availableFormatsIpc,
+  cancelAnalyze,
   exportClip as exportClipIpc,
   defaultSavePath,
   detectEncoder,
   listKeyframes,
   probeVideo,
   type CropRect,
+  type SubjectFrame,
   type VideoMeta,
 } from "./ipc";
+import { buildCropPath, cropWindow, type CropPoint } from "./autoReframe";
 import { formatInfo } from "./formats";
 import {
   canvasAspect,
@@ -110,6 +114,15 @@ export function resolutionCap(): number | null {
 // video's keyframe timestamps (seconds), loaded on open, used for that snapping.
 export const [losslessMode, setLosslessMode] = createSignal(false);
 export const [keyframes, setKeyframes] = createSignal<number[]>([]);
+
+// Subject-aware auto crop-to-fill (v2 Tier 2). `autoDetections` + `autoSceneCuts`
+// are the analyze pass's result, cached per video (ratio- and trim-independent,
+// so a ratio/trim change only rebuilds the cheap path, never re-detects).
+export const [autoDetections, setAutoDetections] = createSignal<SubjectFrame[] | null>(null);
+export const [autoSceneCuts, setAutoSceneCuts] = createSignal<number[]>([]);
+export const [autoAnalyzing, setAutoAnalyzing] = createSignal(false);
+export const [autoProgress, setAutoProgress] = createSignal(0);
+export const [autoError, setAutoError] = createSignal("");
 
 // Audio controls. `muted` drops the audio from the export (and the preview);
 // `volume` is a linear gain (1 = unchanged, 0-2 range in the UI) applied on
@@ -253,6 +266,42 @@ export function chooseRatio(ratio: CanvasRatio): void {
 export function chooseStrategy(strategy: FillStrategy): void {
   setFillStrategy(strategy);
   syncCropMode();
+  // Auto crop-to-fill needs the analyze pass; kick it off (cached, so a re-select
+  // or ratio change is free).
+  if (strategy === "auto") void runAutoAnalyze();
+}
+
+/**
+ * Run the subject analyze pass for auto crop-to-fill and cache its result. No-op
+ * if it's already running or already cached for this video (the result is
+ * ratio-/trim-independent, so it's reused). Reflects `analyze-progress`; failures
+ * surface in `autoError` (the export then falls back to no crop).
+ */
+export async function runAutoAnalyze(): Promise<void> {
+  const input = filePath();
+  const m = meta();
+  if (!input || !m || autoAnalyzing() || autoDetections()) return;
+  setAutoAnalyzing(true);
+  setAutoError("");
+  setAutoProgress(0);
+  const unlisten = await listen<number>("analyze-progress", (e) =>
+    setAutoProgress(typeof e.payload === "number" ? e.payload : 0),
+  );
+  try {
+    const { frames, sceneCuts } = await analyzeSubject(input, m.duration_secs);
+    setAutoDetections(frames);
+    setAutoSceneCuts(sceneCuts);
+  } catch (e) {
+    setAutoError(String(e));
+  } finally {
+    unlisten();
+    setAutoAnalyzing(false);
+  }
+}
+
+/** Request the in-progress analyze pass to abort. */
+export function cancelAutoAnalyze(): void {
+  void cancelAnalyze();
 }
 
 /**
@@ -345,6 +394,12 @@ export async function loadVideo(path: string): Promise<void> {
     // Audio defaults: unmuted, full volume.
     setMuted(false);
     setVolume(1);
+    // Clear cached subject analysis (it's per-video).
+    setAutoDetections(null);
+    setAutoSceneCuts([]);
+    setAutoAnalyzing(false);
+    setAutoProgress(0);
+    setAutoError("");
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -404,6 +459,11 @@ export function closeVideo(): void {
   setKeyframes([]);
   setMuted(false);
   setVolume(1);
+  setAutoDetections(null);
+  setAutoSceneCuts([]);
+  setAutoAnalyzing(false);
+  setAutoProgress(0);
+  setAutoError("");
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
@@ -552,6 +612,9 @@ export function buildReframe(): Reframe | null {
     cap,
   );
   const strategy = fillStrategy();
+
+  if (strategy === "auto") return buildAutoReframe(m, canvasW, canvasH);
+
   return {
     canvasW,
     canvasH,
@@ -561,6 +624,81 @@ export function buildReframe(): Reframe | null {
     // Manual crop-to-fill sends the AR-locked rectangle; the backend crops it
     // and scales to the canvas. Blur/pad carry no crop.
     crop: strategy === "crop" ? cropRect() : null,
+  };
+}
+
+/** Round to the nearest even integer ≥ 2 (libx264 needs even crop dims). */
+function evenInt(v: number): number {
+  const n = Math.max(2, Math.round(v));
+  return n % 2 === 0 ? n : n - 1;
+}
+
+/**
+ * Build the auto crop-to-fill reframe: turn the cached per-frame detections into
+ * a smoothed crop path for the current canvas + trim range, then convert it to a
+ * source-pixel [`AutoPath`] the backend drives as a time-varying crop. When
+ * analysis hasn't produced usable detections yet (still running, or none in the
+ * trim range) it falls back to a **static centered** crop so the chosen canvas
+ * ratio is always honored — never a silent identity export.
+ *
+ * Times are made **clip-relative** (minus `inPoint`) because the export's `-ss`
+ * resets the crop expression's `t` to 0 at the trimmed start.
+ */
+function buildAutoReframe(
+  m: VideoMeta,
+  canvasW: number,
+  canvasH: number,
+): Reframe {
+  const sourceAr = m.width / m.height;
+  const canvasAr = canvasW / canvasH;
+  const inP = inPoint();
+  const outP = outPoint();
+
+  // Try the tracked path; otherwise a single centered control point (static crop).
+  let winW: number;
+  let winH: number;
+  let points: CropPoint[];
+  const dets = autoDetections();
+  const sub = dets
+    ? dets.filter((f) => f.t >= inP && f.t <= outP).map((f) => ({ ...f, t: f.t - inP }))
+    : [];
+  const cuts = autoSceneCuts()
+    .filter((t) => t > inP && t < outP)
+    .map((t) => t - inP);
+  const path = sub.length
+    ? buildCropPath(sub, sourceAr, canvasAr, { sceneCuts: cuts })
+    : null;
+  if (path && path.points.length) {
+    winW = path.winW;
+    winH = path.winH;
+    points = path.points;
+  } else {
+    const win = cropWindow(sourceAr, canvasAr);
+    winW = win.winW;
+    winH = win.winH;
+    points = [{ t: 0, cx: 0.5, cy: 0.5 }];
+  }
+
+  const cropW = evenInt(winW * m.width);
+  const cropH = evenInt(winH * m.height);
+  const clampTo = (v: number, hi: number) => Math.min(hi, Math.max(0, v));
+  // Normalized center → source-pixel top-left corner, clamped into the frame.
+  const x = points.map((p) => ({
+    t: p.t,
+    v: clampTo(p.cx * m.width - cropW / 2, m.width - cropW),
+  }));
+  const y = points.map((p) => ({
+    t: p.t,
+    v: clampTo(p.cy * m.height - cropH / 2, m.height - cropH),
+  }));
+  return {
+    canvasW,
+    canvasH,
+    strategy: "crop", // backend strategy; auto is a UI-only mode of crop
+    anchor: "center",
+    padColor: padColor(),
+    crop: null,
+    auto: { cropW, cropH, x, y },
   };
 }
 

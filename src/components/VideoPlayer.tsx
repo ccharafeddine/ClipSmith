@@ -110,6 +110,9 @@ export default function VideoPlayer() {
     // Blur/pad fit into the canvas shape; original, freeform, and manual
     // crop-to-fill show the full source frame (crop-to-fill edits via the box).
     if (!m || !isPreset(r) || fillStrategy() === "crop") return {};
+    // Auto crop-to-fill fills the canvas (center-cropped) as a static preview;
+    // the live moving-crop overlay comes later (M5).
+    if (fillStrategy() === "auto") return { "object-fit": "cover" };
     const axis = barsAxis(r, m.width, m.height);
     return {
       "object-fit": "contain",
