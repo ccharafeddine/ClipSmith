@@ -190,6 +190,141 @@ fn detect_faces(model: &Runnable, frame: &[u8]) -> Result<Vec<Det>, String> {
     ))
 }
 
+// NanoDet-Plus-m 416 (person). Direct resize (same as the face pass, so boxes
+// come back in source-normalized coords with no letterbox math), BGR channel
+// order with ImageNet mean/std. Single output `[1, P, 80+4*8]`: 80 COCO class
+// logits (person = class 0) + a distribution-focal-loss box (4 sides × 8 bins).
+//
+// MAINTAINER NOTE: the NanoDet decode below encodes several model-specific
+// assumptions that could not be validated on a real-people clip in this
+// environment — the class/reg split order, the level/point ordering, the
+// grid-center 0.5 offset, the [left,top,right,bottom] side order, and the BGR
+// mean/std normalization. The *math* (DFL expectation, prior count, NMS) is
+// unit-tested; confirm end-to-end detection on live-action footage and tune
+// these constants if persons don't track.
+const PERSON_W: usize = 416;
+const PERSON_H: usize = 416;
+const PERSON_SCORE_THR: f32 = 0.4;
+const PERSON_IOU_THR: f32 = 0.5;
+const NANODET_STRIDES: [usize; 4] = [8, 16, 32, 64];
+const NANODET_REG_MAX: usize = 7; // 8 bins per box side
+const NANODET_CLASSES: usize = 80;
+const PERSON_CLASS: usize = 0; // COCO index for "person"
+const NANODET_CH: usize = NANODET_CLASSES + 4 * (NANODET_REG_MAX + 1); // 112
+const NANODET_MEAN: [f32; 3] = [103.53, 116.28, 123.675]; // BGR
+const NANODET_STD: [f32; 3] = [57.375, 57.12, 58.395]; // BGR
+
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+/// The expected value of a distribution-focal-loss side: softmax over the bins,
+/// then `Σ j·softmaxⱼ`. Gives the (sub-integer) distance in stride units.
+fn dfl_expectation(bins: &[f32]) -> f32 {
+    let max = bins.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let exps: Vec<f32> = bins.iter().map(|v| (v - max).exp()).collect();
+    let sum: f32 = exps.iter().sum();
+    if sum <= 0.0 {
+        return 0.0;
+    }
+    exps.iter()
+        .enumerate()
+        .map(|(j, e)| j as f32 * e / sum)
+        .sum()
+}
+
+/// Grid-cell centers `(cx, cy, stride)` in input pixels, in the same order as the
+/// model's flattened output points (each stride level, row-major). Totals 3598
+/// for 416 with strides 8/16/32/64.
+fn nanodet_priors() -> Vec<(f32, f32, f32)> {
+    let mut priors = Vec::new();
+    for &s in &NANODET_STRIDES {
+        let grid = PERSON_W.div_ceil(s);
+        for gy in 0..grid {
+            for gx in 0..grid {
+                priors.push((
+                    (gx as f32 + 0.5) * s as f32,
+                    (gy as f32 + 0.5) * s as f32,
+                    s as f32,
+                ));
+            }
+        }
+    }
+    priors
+}
+
+/// Decode NanoDet's flat `[P, NANODET_CH]` output into person boxes (normalized),
+/// keeping class-0 (person) points above `score_thr`, then NMS.
+fn decode_nanodet(
+    out: &[f32],
+    priors: &[(f32, f32, f32)],
+    score_thr: f32,
+    iou_thr: f32,
+) -> Vec<Det> {
+    let bins = NANODET_REG_MAX + 1;
+    let mut dets = Vec::new();
+    for (i, &(cx, cy, s)) in priors.iter().enumerate() {
+        let base = i * NANODET_CH;
+        if base + NANODET_CH > out.len() {
+            break;
+        }
+        let score = sigmoid(out[base + PERSON_CLASS]);
+        if score < score_thr {
+            continue;
+        }
+        let reg = &out[base + NANODET_CLASSES..base + NANODET_CH];
+        let dl = dfl_expectation(&reg[0..bins]) * s;
+        let dt = dfl_expectation(&reg[bins..2 * bins]) * s;
+        let dr = dfl_expectation(&reg[2 * bins..3 * bins]) * s;
+        let db = dfl_expectation(&reg[3 * bins..4 * bins]) * s;
+        dets.push(Det {
+            x1: (cx - dl) / PERSON_W as f32,
+            y1: (cy - dt) / PERSON_H as f32,
+            x2: (cx + dr) / PERSON_W as f32,
+            y2: (cy + db) / PERSON_H as f32,
+            score,
+        });
+    }
+    nms(dets, iou_thr)
+}
+
+/// Run NanoDet on one `PERSON_W`×`PERSON_H` `rgb24` frame → person boxes.
+fn detect_persons(model: &Runnable, frame: &[u8]) -> Result<Vec<Det>, String> {
+    const HW: usize = PERSON_H * PERSON_W;
+    let mut data = vec![0f32; 3 * HW];
+    for y in 0..PERSON_H {
+        for x in 0..PERSON_W {
+            let px = (y * PERSON_W + x) * 3;
+            let (r, g, b) = (
+                f32::from(frame[px]),
+                f32::from(frame[px + 1]),
+                f32::from(frame[px + 2]),
+            );
+            let i = y * PERSON_W + x;
+            // BGR channel order.
+            data[i] = (b - NANODET_MEAN[0]) / NANODET_STD[0];
+            data[HW + i] = (g - NANODET_MEAN[1]) / NANODET_STD[1];
+            data[2 * HW + i] = (r - NANODET_MEAN[2]) / NANODET_STD[2];
+        }
+    }
+    let input = Tensor::from_shape(&[1, 3, PERSON_H, PERSON_W], &data)
+        .map_err(|e| format!("failed to build the detector input: {e}"))?;
+    let out = model
+        .run(tvec!(input.into()))
+        .map_err(|e| format!("person detection failed: {e}"))?;
+    let t: &Tensor = &out[0];
+    let flat = t
+        .view()
+        .as_slice::<f32>()
+        .map_err(|e| format!("unexpected detector output: {e}"))?;
+    Ok(decode_nanodet(
+        flat,
+        &nanodet_priors(),
+        PERSON_SCORE_THR,
+        PERSON_IOU_THR,
+    ))
+}
+
 /// Shared flag the running analyze pass polls so the frontend can cancel it.
 #[derive(Default)]
 pub struct AnalyzeCancel(pub Arc<AtomicBool>);
@@ -210,13 +345,87 @@ async fn cancelled(flag: &AtomicBool) {
     }
 }
 
-/// Analyze `input` for subjects: sample it at `fps` (default 3), run the
-/// detector on each frame, and return per-frame detections. `duration` (seconds)
-/// is used only for the progress estimate. Emits `analyze-progress` (0.0-1.0)
-/// and is cancellable via [`cancel_analyze`].
+/// One detection pass: pipe frames from ffmpeg at `w`×`h` `rgb24` and run
+/// `detect` on each, returning its boxes per frame. Emits `analyze-progress`
+/// spanning `[prog_base, prog_base + prog_span]` and is cancellable. Shared by
+/// the face and person passes (which differ only in model + input size), so the
+/// pipe / drain / cancel plumbing lives in one place.
+#[allow(clippy::too_many_arguments)]
+async fn run_pass(
+    app: &AppHandle,
+    input: &str,
+    fps: f64,
+    flag: &AtomicBool,
+    model: &Runnable,
+    w: usize,
+    h: usize,
+    detect: fn(&Runnable, &[u8]) -> Result<Vec<Det>, String>,
+    total_frames: usize,
+    prog_base: f64,
+    prog_span: f64,
+) -> Result<Vec<Vec<Det>>, String> {
+    let vf = format!("fps={fps},scale={w}:{h}");
+    let args = [
+        "-v", "error", "-i", input, "-vf", &vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+    ];
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("could not locate ffmpeg: {e}"))?
+        .args(args)
+        .set_raw_out(true)
+        .spawn()
+        .map_err(|e| format!("ffmpeg failed to start: {e}"))?;
+
+    let frame_bytes = w * h * 3;
+    let mut buf: Vec<u8> = Vec::with_capacity(frame_bytes * 2);
+    let mut out: Vec<Vec<Det>> = Vec::new();
+    let mut idx = 0usize;
+    let mut stderr = String::new();
+
+    loop {
+        let event = tokio::select! {
+            biased;
+            () = cancelled(flag) => {
+                let _ = child.kill();
+                return Err(ANALYZE_CANCELLED.to_string());
+            }
+            ev = rx.recv() => match ev {
+                Some(ev) => ev,
+                None => break,
+            },
+        };
+        match event {
+            CommandEvent::Stdout(chunk) => {
+                buf.extend_from_slice(&chunk);
+                while buf.len() >= frame_bytes {
+                    let frame: Vec<u8> = buf.drain(..frame_bytes).collect();
+                    out.push(detect(model, &frame)?);
+                    idx += 1;
+                    let frac = (idx as f64 / total_frames as f64).clamp(0.0, 1.0);
+                    let _ = app.emit("analyze-progress", (prog_base + prog_span * frac).min(1.0));
+                }
+            }
+            CommandEvent::Stderr(chunk) => {
+                stderr.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            CommandEvent::Terminated(payload) if payload.code != Some(0) => {
+                return Err(format!("analysis failed: {}", stderr.trim()));
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Analyze `input` for subjects: sample it at `fps` (default 3) and return
+/// per-frame face + person detections. Runs the two detectors as separate ffmpeg
+/// passes (each needs its own input size); frames align by index since both use
+/// the same `fps`. `duration` (seconds) drives the progress estimate. Emits
+/// `analyze-progress` (0.0-1.0) and is cancellable via [`cancel_analyze`].
 ///
 /// # Errors
-/// Returns a user-facing message if the model can't load, ffmpeg fails, or the
+/// Returns a user-facing message if a model can't load, ffmpeg fails, or the
 /// pass is cancelled.
 #[tauri::command]
 pub async fn analyze_subject(
@@ -233,64 +442,54 @@ pub async fn analyze_subject(
     flag.store(false, Ordering::SeqCst);
 
     let fps = fps.unwrap_or(3.0).clamp(0.5, 15.0);
+    let total = ((duration.max(0.0) * fps).ceil() as usize).max(1);
+
     let face_model = load_model(&model_path(&app, "ultraface-320.onnx")?, 3, FACE_H, FACE_W)?;
+    let person_model = load_model(
+        &model_path(&app, "nanodet-plus-m-416.onnx")?,
+        3,
+        PERSON_H,
+        PERSON_W,
+    )?;
 
-    let vf = format!("fps={fps},scale={FACE_W}:{FACE_H}");
-    let args = [
-        "-v", "error", "-i", &input, "-vf", &vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
-    ];
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| format!("could not locate ffmpeg: {e}"))?
-        .args(args)
-        .set_raw_out(true)
-        .spawn()
-        .map_err(|e| format!("ffmpeg failed to start: {e}"))?;
+    // Two passes over the source (one per detector), each ~half the progress bar.
+    let faces = run_pass(
+        &app,
+        &input,
+        fps,
+        &flag,
+        &face_model,
+        FACE_W,
+        FACE_H,
+        detect_faces,
+        total,
+        0.0,
+        0.5,
+    )
+    .await?;
+    let persons = run_pass(
+        &app,
+        &input,
+        fps,
+        &flag,
+        &person_model,
+        PERSON_W,
+        PERSON_H,
+        detect_persons,
+        total,
+        0.5,
+        0.5,
+    )
+    .await?;
 
-    const FRAME_BYTES: usize = FACE_W * FACE_H * 3;
-    let total_frames = ((duration.max(0.0) * fps).ceil() as usize).max(1);
-    let mut buf: Vec<u8> = Vec::with_capacity(FRAME_BYTES * 2);
-    let mut frames: Vec<SubjectFrame> = Vec::new();
-    let mut idx = 0usize;
-    let mut stderr = String::new();
-
-    loop {
-        let event = tokio::select! {
-            biased;
-            () = cancelled(&flag) => {
-                let _ = child.kill();
-                return Err(ANALYZE_CANCELLED.to_string());
-            }
-            ev = rx.recv() => match ev {
-                Some(ev) => ev,
-                None => break,
-            },
-        };
-        match event {
-            CommandEvent::Stdout(chunk) => {
-                buf.extend_from_slice(&chunk);
-                while buf.len() >= FRAME_BYTES {
-                    let frame: Vec<u8> = buf.drain(..FRAME_BYTES).collect();
-                    let faces = detect_faces(&face_model, &frame)?;
-                    frames.push(SubjectFrame {
-                        t: idx as f64 / fps,
-                        faces,
-                        persons: Vec::new(),
-                    });
-                    idx += 1;
-                    let p = (idx as f64 / total_frames as f64).clamp(0.0, 1.0);
-                    let _ = app.emit("analyze-progress", p);
-                }
-            }
-            CommandEvent::Stderr(chunk) => {
-                stderr.push_str(&String::from_utf8_lossy(&chunk));
-            }
-            CommandEvent::Terminated(payload) if payload.code != Some(0) => {
-                return Err(format!("analysis failed: {}", stderr.trim()));
-            }
-            _ => {}
-        }
+    let n = faces.len().max(persons.len());
+    let mut frames = Vec::with_capacity(n);
+    for i in 0..n {
+        frames.push(SubjectFrame {
+            t: i as f64 / fps,
+            faces: faces.get(i).cloned().unwrap_or_default(),
+            persons: persons.get(i).cloned().unwrap_or_default(),
+        });
     }
 
     let _ = app.emit("analyze-progress", 1.0_f64);
@@ -333,6 +532,29 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert!((kept[0].score - 0.9).abs() < 1e-6);
         assert!((kept[1].score - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nanodet_priors_total_matches_output_points() {
+        // 52² + 26² + 13² + 7² = 3598, the model's point count for 416 input.
+        assert_eq!(nanodet_priors().len(), 3598);
+    }
+
+    #[test]
+    fn dfl_expectation_is_the_softmax_weighted_mean() {
+        // Uniform logits → mean bin index (0..7) = 3.5.
+        assert!((dfl_expectation(&[0.0; 8]) - 3.5).abs() < 1e-4);
+        // A logit spike at index 5 dominates → close to 5.
+        let mut bins = [0.0f32; 8];
+        bins[5] = 50.0;
+        assert!((dfl_expectation(&bins) - 5.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sigmoid_midpoint_and_bounds() {
+        assert!((sigmoid(0.0) - 0.5).abs() < 1e-6);
+        assert!(sigmoid(20.0) > 0.99);
+        assert!(sigmoid(-20.0) < 0.01);
     }
 
     #[test]

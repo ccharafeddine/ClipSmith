@@ -26,13 +26,17 @@ export default function DevAnalyze() {
     try {
       const frames = await analyzeSubject(input, m.duration_secs);
       const withFace = frames.filter((f) => f.faces.length > 0).length;
-      const maxFaces = frames.reduce((a, f) => Math.max(a, f.faces.length), 0);
-      const peak = frames.reduce(
+      const withPerson = frames.filter((f) => f.persons.length > 0).length;
+      const facePeak = frames.reduce(
         (a, f) => Math.max(a, ...f.faces.map((d) => d.score), 0),
         0,
       );
+      const personPeak = frames.reduce(
+        (a, f) => Math.max(a, ...f.persons.map((d) => d.score), 0),
+        0,
+      );
       setSummary(
-        `${frames.length} frames · ${withFace} with a face · up to ${maxFaces} · peak ${Math.round(peak * 100)}%`,
+        `${frames.length} frames · faces ${withFace} (peak ${Math.round(facePeak * 100)}%) · persons ${withPerson} (peak ${Math.round(personPeak * 100)}%)`,
       );
     } catch (e) {
       setError(String(e));
