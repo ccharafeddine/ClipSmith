@@ -3,6 +3,7 @@ import {
   buildCropPath,
   buildRawCenters,
   cropWindow,
+  sampleCenter,
   selectSubject,
   simplify,
   smooth,
@@ -150,6 +151,27 @@ describe("simplify (Douglas-Peucker)", () => {
       { t: 2, cx: 0.2, cy: 0.5 },
     ];
     expect(simplify(pts, 0.01, "x")).toHaveLength(3);
+  });
+});
+
+describe("sampleCenter", () => {
+  const pts: CropPoint[] = [
+    { t: 0, cx: 0.2, cy: 0.5 },
+    { t: 2, cx: 0.6, cy: 0.5 },
+  ];
+
+  it("interpolates linearly between control points", () => {
+    expect(sampleCenter(pts, 1).cx).toBeCloseTo(0.4, 6); // halfway
+    expect(sampleCenter(pts, 0.5).cx).toBeCloseTo(0.3, 6);
+  });
+
+  it("holds the ends outside the range", () => {
+    expect(sampleCenter(pts, -5).cx).toBe(0.2);
+    expect(sampleCenter(pts, 99).cx).toBe(0.6);
+  });
+
+  it("defaults to center with no points", () => {
+    expect(sampleCenter([], 1)).toEqual({ cx: 0.5, cy: 0.5 });
   });
 });
 

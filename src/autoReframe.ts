@@ -232,6 +232,31 @@ export function simplify(
 }
 
 /**
+ * Sample the crop center at time `t` by linear interpolation between control
+ * points, holding the ends. Drives the live preview overlay; `points` times are
+ * whatever space the caller built them in (the preview uses absolute video time).
+ */
+export function sampleCenter(
+  points: CropPoint[],
+  t: number,
+): { cx: number; cy: number } {
+  if (points.length === 0) return { cx: 0.5, cy: 0.5 };
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (t <= first.t) return { cx: first.cx, cy: first.cy };
+  if (t >= last.t) return { cx: last.cx, cy: last.cy };
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const f = b.t > a.t ? (t - a.t) / (b.t - a.t) : 0;
+      return { cx: a.cx + (b.cx - a.cx) * f, cy: a.cy + (b.cy - a.cy) * f };
+    }
+  }
+  return { cx: last.cx, cy: last.cy };
+}
+
+/**
  * Build the full crop path for a set of per-frame detections against a target
  * canvas: window → tracked raw centers → smoothed (scene-cut aware) → simplified
  * control points. Returns `null` if there are no frames.

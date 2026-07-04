@@ -26,6 +26,8 @@ import {
   setViewEnd,
 } from "../state";
 import { anchorObjectPosition, barsAxis, isPreset } from "../reframe";
+import { sampleCenter } from "../autoReframe";
+import { autoPreviewPath } from "../state";
 import { formatDuration } from "../format";
 import Timeline from "./Timeline";
 import CropOverlay from "./CropOverlay";
@@ -102,6 +104,22 @@ export default function VideoPlayer() {
   const showBlurBg = () =>
     isPreset(reframeRatio()) && fillStrategy() === "blur";
 
+  // Auto crop-to-fill preview: the tracked crop path (recomputed only when the
+  // ratio / detections / trim change), sampled at the playhead into a box over
+  // the full-frame stage. The box (normalized) maps straight to stage percentages.
+  const autoPath = createMemo(() => autoPreviewPath());
+  const autoBox = createMemo(() => {
+    const p = autoPath();
+    if (!p) return null;
+    const { cx, cy } = sampleCenter(p.points, currentTime());
+    return {
+      left: (cx - p.winW / 2) * 100,
+      top: (cy - p.winH / 2) * 100,
+      w: p.winW * 100,
+      h: p.winH * 100,
+    };
+  });
+
   // Foreground fit: presets `contain`-fit and anchor the source; original and
   // freeform fill the (source-shaped) stage exactly as v1 did.
   const fgStyle = (): JSX.CSSProperties => {
@@ -110,9 +128,9 @@ export default function VideoPlayer() {
     // Blur/pad fit into the canvas shape; original, freeform, and manual
     // crop-to-fill show the full source frame (crop-to-fill edits via the box).
     if (!m || !isPreset(r) || fillStrategy() === "crop") return {};
-    // Auto crop-to-fill fills the canvas (center-cropped) as a static preview;
-    // the live moving-crop overlay comes later (M5).
-    if (fillStrategy() === "auto") return { "object-fit": "cover" };
+    // Auto crop-to-fill shows the full source frame with the moving crop box
+    // drawn over it (see `autoBox`), so you can watch the tracking.
+    if (fillStrategy() === "auto") return {};
     const axis = barsAxis(r, m.width, m.height);
     return {
       "object-fit": "contain",
@@ -226,6 +244,19 @@ export default function VideoPlayer() {
               clip are built with FFmpeg.
             </p>
           </div>
+        </Show>
+        <Show when={autoBox()}>
+          {(b) => (
+            <div
+              class="auto-crop-box"
+              style={{
+                left: `${b().left}%`,
+                top: `${b().top}%`,
+                width: `${b().w}%`,
+                height: `${b().h}%`,
+              }}
+            />
+          )}
         </Show>
         <CropOverlay />
         </div>

@@ -17,7 +17,12 @@ import {
   type SubjectFrame,
   type VideoMeta,
 } from "./ipc";
-import { buildCropPath, cropWindow, type CropPoint } from "./autoReframe";
+import {
+  buildCropPath,
+  cropWindow,
+  type CropPath,
+  type CropPoint,
+} from "./autoReframe";
 import { formatInfo } from "./formats";
 import {
   canvasAspect,
@@ -330,6 +335,9 @@ export function stageAspect(): number {
   // whole source frame so the draggable box has the full picture to work with.
   if (cropMode()) return m.width / m.height;
   const r = reframeRatio();
+  // Auto crop-to-fill also shows the full frame, with the moving crop box drawn
+  // over it (the preview overlay), so you can see the tracking.
+  if (isPreset(r) && fillStrategy() === "auto") return m.width / m.height;
   return isPreset(r) ? canvasAspect(r, m.width, m.height) : m.width / m.height;
 }
 
@@ -625,6 +633,30 @@ export function buildReframe(): Reframe | null {
     // and scales to the canvas. Blur/pad carry no crop.
     crop: strategy === "crop" ? cropRect() : null,
   };
+}
+
+/**
+ * The auto crop path for the **live preview overlay** — the same tracked path as
+ * the export, but keeping **absolute** video times (not clip-relative) so it can
+ * be sampled against the player's `currentTime`. `null` unless Auto is the active
+ * fill on a preset and analysis has produced detections in the trim range.
+ * `winW`/`winH` (normalized) size the box; `points` pan its center.
+ */
+export function autoPreviewPath(): CropPath | null {
+  const m = meta();
+  const dets = autoDetections();
+  const ratio = reframeRatio();
+  if (!m || fillStrategy() !== "auto" || !isPreset(ratio) || !dets) return null;
+  const [cw, ch] = capShorterSide(
+    canvasDims(ratio, m.width, m.height),
+    resolutionCap(),
+  );
+  const inP = inPoint();
+  const outP = outPoint();
+  const sub = dets.filter((f) => f.t >= inP && f.t <= outP); // absolute times
+  if (!sub.length) return null;
+  const cuts = autoSceneCuts().filter((t) => t > inP && t < outP);
+  return buildCropPath(sub, m.width / m.height, cw / ch, { sceneCuts: cuts });
 }
 
 /** Round to the nearest even integer ≥ 2 (libx264 needs even crop dims). */

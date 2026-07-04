@@ -591,6 +591,19 @@ button.export:hover:not(:disabled) {
   font-weight: 400;
 }
 
+/* Auto-reframe preview: a read-only crop box drawn over the full-frame stage
+   that pans with playback to show the tracked subject. Dims outside the box with
+   a big spread shadow, like the crop overlay, but non-interactive. `left/top/
+   width/height` are set inline (stage percentages) and update per frame. */
+.auto-crop-box {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--accent-2);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
 /* ---- Crop overlay ----------------------------------------------------------
    Covers the stage while cropping. The container ignores pointer events so the
    video underneath stays interactive; only the box and its handles catch them.
