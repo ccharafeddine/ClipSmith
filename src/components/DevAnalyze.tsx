@@ -24,7 +24,7 @@ export default function DevAnalyze() {
       setProgress(typeof e.payload === "number" ? e.payload : 0),
     );
     try {
-      const frames = await analyzeSubject(input, m.duration_secs);
+      const { frames, sceneCuts } = await analyzeSubject(input, m.duration_secs);
       const withFace = frames.filter((f) => f.faces.length > 0).length;
       const withPerson = frames.filter((f) => f.persons.length > 0).length;
       const facePeak = frames.reduce(
@@ -36,7 +36,7 @@ export default function DevAnalyze() {
         0,
       );
       setSummary(
-        `${frames.length} frames · faces ${withFace} (peak ${Math.round(facePeak * 100)}%) · persons ${withPerson} (peak ${Math.round(personPeak * 100)}%)`,
+        `${frames.length} frames · faces ${withFace} (peak ${Math.round(facePeak * 100)}%) · persons ${withPerson} (peak ${Math.round(personPeak * 100)}%) · ${sceneCuts.length} cuts`,
       );
     } catch (e) {
       setError(String(e));

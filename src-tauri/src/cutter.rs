@@ -18,13 +18,6 @@
 //! the export fail on those sources. (The lossless copy keeps *all* streams,
 //! since it stays in the source container.)
 //!
-//! The output is always mp4 (H.264 video + AAC audio): H.264 can't live in some
-//! source containers (e.g. `.webm`), and a reframe rewrites every pixel anyway, so
-//! binding the output to the source container no longer makes sense. The first
-//! video stream and all audio streams are kept; subtitles/attachments are
-//! dropped, since they can't always be carried into mp4 (e.g. bitmap subs) and
-//! keeping them would make the export fail on those sources.
-//!
 //! ## Reframe (v2)
 //!
 //! v1 had a single destructive `crop=w:h:x:y` filter. v2 generalizes this into a
@@ -200,6 +193,68 @@ pub struct Reframe {
     /// Explicit crop rectangle for [`Strategy::Crop`] (source pixels).
     #[serde(default)]
     pub crop: Option<Crop>,
+    /// Subject-aware auto crop-to-fill: a time-varying crop window (source
+    /// pixels) that pans to follow the tracked subject. Present only for
+    /// [`Strategy::Crop`] in Auto mode; takes precedence over `crop`.
+    #[serde(default)]
+    pub auto: Option<AutoPath>,
+}
+
+/// A time-varying crop window for subject-aware auto-reframe. `crop_w`/`crop_h`
+/// are the (fixed) window size in source pixels; `x`/`y` are the window's
+/// top-left corner over time (also source pixels), as control points the
+/// backend interpolates into per-frame `crop` `x`/`y` expressions.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoPath {
+    pub crop_w: u32,
+    pub crop_h: u32,
+    pub x: Vec<AutoPoint>,
+    pub y: Vec<AutoPoint>,
+}
+
+/// One control point of an [`AutoPath`] axis: value `v` (source pixels) at time
+/// `t` (seconds, relative to the trimmed clip start).
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct AutoPoint {
+    pub t: f64,
+    pub v: f64,
+}
+
+/// A clamped linear-interpolation sub-expression between two control points: it
+/// yields `v0` before `t0`, `v1` after `t1`, and lerps in between. Commas inside
+/// `clip(...)` are backslash-escaped for the filtergraph.
+fn lerp_expr(t0: f64, v0: f64, t1: f64, v1: f64) -> String {
+    let dt = t1 - t0;
+    if dt.abs() < 1e-6 {
+        return format!("{v1:.3}"); // coincident times → step to v1
+    }
+    let dv = v1 - v0;
+    format!("({v0:.3}+({dv:.3})*clip((t-{t0:.4})/{dt:.4}\\,0\\,1))")
+}
+
+/// Build a per-frame `t`-expression tracking the control `points` with clamped
+/// piecewise-linear interpolation, holding the ends. A constant path collapses
+/// to the bare number. Commas inside `if(...)` are backslash-escaped.
+fn piecewise_expr(points: &[AutoPoint]) -> String {
+    match points {
+        [] => "0".to_string(),
+        [p] => format!("{:.3}", p.v),
+        _ => {
+            let v0 = points[0].v;
+            if points.iter().all(|p| (p.v - v0).abs() < 1e-6) {
+                return format!("{v0:.3}");
+            }
+            let n = points.len();
+            let mut expr = format!("{:.3}", points[n - 1].v); // beyond last → hold
+            for i in (0..n - 1).rev() {
+                let seg = lerp_expr(points[i].t, points[i].v, points[i + 1].t, points[i + 1].v);
+                let tn = points[i + 1].t;
+                expr = format!("if(lt(t\\,{tn:.4})\\,{seg}\\,{expr})");
+            }
+            expr
+        }
+    }
 }
 
 /// The video filter to apply, if any. `Simple` becomes `-vf`; `Complex` becomes
@@ -219,6 +274,21 @@ impl Reframe {
 
         match self.strategy {
             Strategy::Crop => {
+                // Subject-aware auto mode: a time-varying crop window that pans
+                // over `t`, then scales to the canvas. The x/y corner expressions
+                // are safety-clamped into the frame (`iw-ow`, `ih-oh`) so
+                // interpolation rounding can't push the crop out of bounds.
+                if let Some(auto) = &self.auto {
+                    let cw = even(auto.crop_w);
+                    let ch = even(auto.crop_h);
+                    let xe = piecewise_expr(&auto.x);
+                    let ye = piecewise_expr(&auto.y);
+                    return VideoFilter::Simple(format!(
+                        "crop=w={cw}:h={ch}:\
+                         x=max(0\\,min(iw-ow\\,{xe})):y=max(0\\,min(ih-oh\\,{ye})),\
+                         scale={w}:{h},setsar=1"
+                    ));
+                }
                 let Some(crop) = self.crop else {
                     return VideoFilter::None;
                 };
@@ -590,6 +660,7 @@ mod tests {
                 w: 100,
                 h: 50,
             }),
+            auto: None,
         };
         assert_eq!(simple(&r), "crop=100:50:10:6");
     }
@@ -608,6 +679,7 @@ mod tests {
                 w: 540,
                 h: 960,
             }),
+            auto: None,
         };
         assert_eq!(simple(&r), "crop=540:960:0:0,scale=1080:1920,setsar=1");
     }
@@ -621,6 +693,7 @@ mod tests {
             anchor: Anchor::Center,
             pad_color: None,
             crop: None,
+            auto: None,
         };
         assert!(matches!(r.to_filter(), VideoFilter::None));
     }
@@ -634,6 +707,7 @@ mod tests {
             anchor: Anchor::Center,
             pad_color: c.map(str::to_string),
             crop: None,
+            auto: None,
         };
         // Valid hex → 0xRRGGBB (case-insensitive).
         assert!(simple(&mk(Some("#1a2B3c"))).contains(":0x1a2B3c,setsar=1"));
@@ -680,6 +754,7 @@ mod tests {
             anchor: Anchor::Start,
             pad_color: Some("#112233".to_string()),
             crop: None,
+            auto: None,
         };
         assert_eq!(
             simple(&r),
@@ -696,6 +771,7 @@ mod tests {
             anchor: Anchor::Center,
             pad_color: None,
             crop: None,
+            auto: None,
         };
         assert_eq!(
             simple(&r),
@@ -712,6 +788,7 @@ mod tests {
             anchor: Anchor::Center,
             pad_color: None,
             crop: None,
+            auto: None,
         };
         let g = complex(&r);
         assert!(g.starts_with("[0:v]split=2[bg][fg];"));
@@ -730,7 +807,60 @@ mod tests {
             anchor: Anchor::Center,
             pad_color: None,
             crop: None,
+            auto: None,
         };
         assert!(simple(&r).contains("scale=1080:1920:"));
+    }
+
+    #[test]
+    fn piecewise_expr_collapses_a_constant_path() {
+        let pts = [
+            AutoPoint { t: 0.0, v: 100.0 },
+            AutoPoint { t: 2.0, v: 100.0 },
+        ];
+        assert_eq!(piecewise_expr(&pts), "100.000");
+        // Single point → bare value.
+        assert_eq!(piecewise_expr(&[AutoPoint { t: 0.0, v: 42.0 }]), "42.000");
+    }
+
+    #[test]
+    fn piecewise_expr_interpolates_between_points() {
+        let pts = [
+            AutoPoint { t: 0.0, v: 100.0 },
+            AutoPoint { t: 1.0, v: 200.0 },
+        ];
+        let e = piecewise_expr(&pts);
+        // Nested if switching at t=1, clamped lerp, escaped commas for the graph.
+        assert!(e.contains("if(lt(t\\,1.0000)\\,"));
+        assert!(e.contains("clip((t-0.0000)/1.0000\\,0\\,1)"));
+        assert!(e.ends_with("200.000)"));
+    }
+
+    #[test]
+    fn auto_crop_builds_time_varying_filter() {
+        let r = Reframe {
+            canvas_w: 1080,
+            canvas_h: 1920,
+            strategy: Strategy::Crop,
+            anchor: Anchor::Center,
+            pad_color: None,
+            crop: None, // auto takes precedence over a static rect
+            auto: Some(AutoPath {
+                crop_w: 607, // odd → evened to 606
+                crop_h: 1080,
+                x: vec![
+                    AutoPoint { t: 0.0, v: 100.0 },
+                    AutoPoint { t: 1.0, v: 200.0 },
+                ],
+                y: vec![AutoPoint { t: 0.0, v: 0.0 }],
+            }),
+        };
+        let f = simple(&r);
+        assert!(f.starts_with("crop=w=606:h=1080:"), "{f}");
+        // Corner expressions are safety-clamped into the frame.
+        assert!(f.contains("x=max(0\\,min(iw-ow\\,"));
+        assert!(f.contains("y=max(0\\,min(ih-oh\\,"));
+        // Then scaled to the canvas.
+        assert!(f.ends_with(",scale=1080:1920,setsar=1"), "{f}");
     }
 }

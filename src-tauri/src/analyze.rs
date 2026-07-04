@@ -418,10 +418,90 @@ async fn run_pass(
     Ok(out)
 }
 
+/// Scene-change score threshold for a hard cut (ffmpeg `scene` metric, 0-1).
+const SCENE_THR: f32 = 0.4;
+
+/// Parse `pts_time:` timestamps out of ffmpeg's `metadata=print` output — one per
+/// scene-change frame the `select` passed. Sorted, de-duplicated.
+fn parse_scene_cuts(text: &str) -> Vec<f64> {
+    let mut cuts: Vec<f64> = text
+        .lines()
+        .filter_map(|line| {
+            let idx = line.find("pts_time:")?;
+            let rest = &line[idx + "pts_time:".len()..];
+            let num: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            num.parse::<f64>().ok()
+        })
+        .collect();
+    cuts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    cuts.dedup();
+    cuts
+}
+
+/// Detect scene-cut timestamps (seconds) with a cheap ffmpeg pass: score each
+/// frame's scene change, keep those over [`SCENE_THR`], and print their times.
+/// Downscaled for speed; the score is relative, so the small size is fine.
+/// Cancellable via `flag`.
+async fn detect_scene_cuts(
+    app: &AppHandle,
+    input: &str,
+    flag: &AtomicBool,
+) -> Result<Vec<f64>, String> {
+    // metadata=print:file=- writes to stdout (not the -v error-suppressed log).
+    let vf = format!("scale=320:-2,select='gt(scene,{SCENE_THR})',metadata=print:file=-");
+    let args = [
+        "-v", "error", "-i", input, "-an", "-vf", &vf, "-f", "null", "-",
+    ];
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("could not locate ffmpeg: {e}"))?
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("ffmpeg failed to start: {e}"))?;
+
+    let mut text = String::new();
+    let mut stderr = String::new();
+    loop {
+        let event = tokio::select! {
+            biased;
+            () = cancelled(flag) => {
+                let _ = child.kill();
+                return Err(ANALYZE_CANCELLED.to_string());
+            }
+            ev = rx.recv() => match ev {
+                Some(ev) => ev,
+                None => break,
+            },
+        };
+        match event {
+            CommandEvent::Stdout(chunk) => text.push_str(&String::from_utf8_lossy(&chunk)),
+            CommandEvent::Stderr(chunk) => stderr.push_str(&String::from_utf8_lossy(&chunk)),
+            CommandEvent::Terminated(payload) if payload.code != Some(0) => {
+                return Err(format!("scene detection failed: {}", stderr.trim()));
+            }
+            _ => {}
+        }
+    }
+    Ok(parse_scene_cuts(&text))
+}
+
+/// The analyze pass result: per-frame detections plus scene-cut times.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeResult {
+    pub frames: Vec<SubjectFrame>,
+    pub scene_cuts: Vec<f64>,
+}
+
 /// Analyze `input` for subjects: sample it at `fps` (default 3) and return
-/// per-frame face + person detections. Runs the two detectors as separate ffmpeg
-/// passes (each needs its own input size); frames align by index since both use
-/// the same `fps`. `duration` (seconds) drives the progress estimate. Emits
+/// per-frame face + person detections plus scene-cut times. Runs the two
+/// detectors as separate ffmpeg passes (each needs its own input size) then a
+/// cheap scene-cut pass; frames align by index since both detectors use the same
+/// `fps`. `duration` (seconds) drives the progress estimate. Emits
 /// `analyze-progress` (0.0-1.0) and is cancellable via [`cancel_analyze`].
 ///
 /// # Errors
@@ -434,7 +514,7 @@ pub async fn analyze_subject(
     input: String,
     duration: f64,
     fps: Option<f64>,
-) -> Result<Vec<SubjectFrame>, String> {
+) -> Result<AnalyzeResult, String> {
     if input.starts_with('-') {
         return Err("that file path isn't allowed".to_string());
     }
@@ -452,7 +532,8 @@ pub async fn analyze_subject(
         PERSON_W,
     )?;
 
-    // Two passes over the source (one per detector), each ~half the progress bar.
+    // Two detection passes (one per detector) split the first 90% of the
+    // progress bar; the cheap scene-cut pass fills the rest.
     let faces = run_pass(
         &app,
         &input,
@@ -464,7 +545,7 @@ pub async fn analyze_subject(
         detect_faces,
         total,
         0.0,
-        0.5,
+        0.45,
     )
     .await?;
     let persons = run_pass(
@@ -477,10 +558,11 @@ pub async fn analyze_subject(
         PERSON_H,
         detect_persons,
         total,
-        0.5,
-        0.5,
+        0.45,
+        0.45,
     )
     .await?;
+    let scene_cuts = detect_scene_cuts(&app, &input, &flag).await?;
 
     let n = faces.len().max(persons.len());
     let mut frames = Vec::with_capacity(n);
@@ -493,7 +575,7 @@ pub async fn analyze_subject(
     }
 
     let _ = app.emit("analyze-progress", 1.0_f64);
-    Ok(frames)
+    Ok(AnalyzeResult { frames, scene_cuts })
 }
 
 #[cfg(test)]
@@ -532,6 +614,19 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert!((kept[0].score - 0.9).abs() < 1e-6);
         assert!((kept[1].score - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_scene_cuts_extracts_sorted_unique_times() {
+        let text = "\
+frame:5    pts:370688  pts_time:12.345
+lavfi.scene_score=0.512
+frame:1    pts:30000   pts_time:1.5
+lavfi.scene_score=0.470
+frame:5    pts:370688  pts_time:12.345
+";
+        assert_eq!(parse_scene_cuts(text), vec![1.5, 12.345]);
+        assert!(parse_scene_cuts("no timestamps here").is_empty());
     }
 
     #[test]

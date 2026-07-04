@@ -178,18 +178,24 @@ export interface SubjectFrame {
   persons: Detection[];
 }
 
+/** The analyze pass result: per-frame detections plus scene-cut times (seconds). */
+export interface AnalyzeResult {
+  frames: SubjectFrame[];
+  sceneCuts: number[];
+}
+
 /**
- * Analyze a video for subjects (auto-reframe, phase one): sample it at `fps`
- * (default 3), detect per frame, and resolve to per-frame detections. `duration`
- * (seconds) drives the progress estimate. Emits "analyze-progress" (0.0-1.0);
- * cancel with {@link cancelAnalyze}.
+ * Analyze a video for subjects (auto-reframe): sample it at `fps` (default 3),
+ * detect per frame, and detect scene cuts. `duration` (seconds) drives the
+ * progress estimate. Emits "analyze-progress" (0.0-1.0); cancel with
+ * {@link cancelAnalyze}.
  */
 export function analyzeSubject(
   input: string,
   duration: number,
   fps?: number,
-): Promise<SubjectFrame[]> {
-  return invoke<SubjectFrame[]>("analyze_subject", {
+): Promise<AnalyzeResult> {
+  return invoke<AnalyzeResult>("analyze_subject", {
     input,
     duration,
     fps: fps ?? null,
