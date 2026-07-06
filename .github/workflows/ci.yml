@@ -61,7 +61,10 @@ jobs:
       # the host triple, even for `cargo check`/`clippy`/`test` (which don't
       # bundle). These CI checks don't run the real ffmpeg, so empty stub files
       # satisfy the existence check without downloading/compiling the sidecars.
-      - name: Stub sidecar binaries for the Rust checks
+      # The same build script also validates the `resources` globs; the ONNX
+      # detector models are gitignored and runtime-only (tests skip when absent),
+      # so a stub .onnx makes `models/*.onnx` match without fetching them.
+      - name: Stub sidecar binaries and model resources for the Rust checks
         run: |
           mkdir -p src-tauri/binaries
           triple=x86_64-unknown-linux-gnu
@@ -69,6 +72,8 @@ jobs:
             touch "src-tauri/binaries/${bin}-${triple}"
             chmod +x "src-tauri/binaries/${bin}-${triple}"
           done
+          mkdir -p src-tauri/models
+          touch src-tauri/models/stub.onnx
 
       - name: Format check
         working-directory: src-tauri
