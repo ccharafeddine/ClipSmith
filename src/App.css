@@ -598,10 +598,17 @@ button.export:hover:not(:disabled) {
 .auto-crop-box {
   position: absolute;
   z-index: 2;
-  pointer-events: none;
+  /* Interactive: drag it to correct the framing at the current moment. */
+  pointer-events: auto;
+  touch-action: none;
   box-sizing: border-box;
   border: 2px solid var(--accent-2);
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
+/* Once the user has placed a fix, tint the box so it's clearly hand-corrected. */
+.auto-crop-box.corrected {
+  border-color: var(--accent);
 }
 
 /* ---- Crop overlay ----------------------------------------------------------
@@ -910,6 +917,25 @@ button.export:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-2) 55%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+/* Manual "drag to fix" markers (Auto-Reframe): a diamond over the strip at each
+   correction time. Click to remove; the `left` percentage is set inline. */
+.tl-correction {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #fff;
+  transform: translate(-50%, -50%) rotate(45deg);
+  cursor: pointer;
+  z-index: 3;
+}
+
+.tl-correction:hover {
+  background: color-mix(in srgb, var(--accent) 70%, #fff);
 }
 
 /* ---- Export panel ----------------------------------------------------- */

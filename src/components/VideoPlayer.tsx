@@ -26,8 +26,8 @@ import {
   setViewEnd,
 } from "../state";
 import { anchorObjectPosition, barsAxis, isPreset } from "../reframe";
-import { sampleCenter } from "../autoReframe";
-import { autoPreviewPath } from "../state";
+import { correctedCenter } from "../autoReframe";
+import { addCorrection, autoCorrections, autoPreviewPath } from "../state";
 import { formatDuration } from "../format";
 import Timeline from "./Timeline";
 import CropOverlay from "./CropOverlay";
@@ -58,6 +58,8 @@ export default function VideoPlayer() {
   // mute/volume. The element's `volume` is 0-1, so a boost above 100% previews at
   // 100% (the export still applies the real gain).
   let fgEl: HTMLVideoElement | undefined;
+  // The stage box, used to map pointer coords for the auto crop drag-to-fix.
+  let stageEl: HTMLDivElement | undefined;
   createEffect(() => {
     const el = fgEl;
     if (!el) return;
@@ -111,7 +113,8 @@ export default function VideoPlayer() {
   const autoBox = createMemo(() => {
     const p = autoPath();
     if (!p) return null;
-    const { cx, cy } = sampleCenter(p.points, currentTime());
+    // Corrected sampling: the auto track with the user's drag-to-fix nudges.
+    const { cx, cy } = correctedCenter(p, autoCorrections(), currentTime());
     return {
       left: (cx - p.winW / 2) * 100,
       top: (cy - p.winH / 2) * 100,
@@ -119,6 +122,42 @@ export default function VideoPlayer() {
       h: p.winH * 100,
     };
   });
+
+  // The axis the auto crop can pan along (the other is pinned) — drives which way
+  // a drag-to-fix correction moves the box.
+  const autoFreeAxis = (): "x" | "y" => {
+    const p = autoPath();
+    return p && p.winH < 1 ? "y" : "x";
+  };
+
+  // Drag the auto crop box to correct a moment ("drag to fix, auto eases back").
+  // The drag pauses playback so the frame under the box is stable, and writes a
+  // correction at the current playhead time on the free axis; the box follows via
+  // `autoBox` (which samples the corrected path). Coords map through the stage.
+  function startAutoDrag(e: PointerEvent) {
+    const p = autoPath();
+    if (!p || !stageEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (fgEl) fgEl.pause();
+    const rect = stageEl.getBoundingClientRect();
+    const axis = autoFreeAxis();
+    const half = (axis === "x" ? p.winW : p.winH) / 2;
+    const t = currentTime();
+    const apply = (ev: PointerEvent) => {
+      const nx = (ev.clientX - rect.left) / rect.width;
+      const ny = (ev.clientY - rect.top) / rect.height;
+      const c = Math.min(1 - half, Math.max(half, axis === "x" ? nx : ny));
+      addCorrection(t, axis === "x" ? c : 0.5, axis === "y" ? c : 0.5);
+    };
+    apply(e);
+    const onUp = () => {
+      window.removeEventListener("pointermove", apply);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", apply);
+    window.addEventListener("pointerup", onUp);
+  }
 
   // Foreground fit: presets `contain`-fit and anchor the source; original and
   // freeform fill the (source-shaped) stage exactly as v1 did.
@@ -185,7 +224,7 @@ export default function VideoPlayer() {
   return (
     <section class="player">
       <div class="stage-wrap">
-        <div class="stage" style={stageStyle()}>
+        <div class="stage" style={stageStyle()} ref={stageEl}>
         <Show when={showBlurBg()}>
           <video
             class="stage-bg"
@@ -249,12 +288,16 @@ export default function VideoPlayer() {
           {(b) => (
             <div
               class="auto-crop-box"
+              classList={{ corrected: autoCorrections().length > 0 }}
               style={{
                 left: `${b().left}%`,
                 top: `${b().top}%`,
                 width: `${b().w}%`,
                 height: `${b().h}%`,
+                cursor: autoFreeAxis() === "x" ? "ew-resize" : "ns-resize",
               }}
+              onPointerDown={startAutoDrag}
+              title="Drag to fix the framing at this moment"
             />
           )}
         </Show>

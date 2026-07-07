@@ -202,6 +202,12 @@ fn detect_faces(model: &Runnable, frame: &[u8]) -> Result<Vec<Det>, String> {
 // mean/std normalization. The *math* (DFL expectation, prior count, NMS) is
 // unit-tested; confirm end-to-end detection on live-action footage and tune
 // these constants if persons don't track.
+//
+// The class score is the model's own sigmoid output (a probability), so empty
+// priors sit near 0 and real detections near 0.7–0.95 on typical footage — a
+// standard 0.4 person threshold cleanly separates them. (Flat cartoon
+// silhouettes score much lower, ~0.2–0.4, so they detect sparsely; that's a
+// content limitation, not a threshold to chase — the manual override covers it.)
 const PERSON_W: usize = 416;
 const PERSON_H: usize = 416;
 const PERSON_SCORE_THR: f32 = 0.4;
@@ -213,10 +219,6 @@ const PERSON_CLASS: usize = 0; // COCO index for "person"
 const NANODET_CH: usize = NANODET_CLASSES + 4 * (NANODET_REG_MAX + 1); // 112
 const NANODET_MEAN: [f32; 3] = [103.53, 116.28, 123.675]; // BGR
 const NANODET_STD: [f32; 3] = [57.375, 57.12, 58.395]; // BGR
-
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
-}
 
 /// The expected value of a distribution-focal-loss side: softmax over the bins,
 /// then `Σ j·softmaxⱼ`. Gives the (sub-integer) distance in stride units.
@@ -268,7 +270,11 @@ fn decode_nanodet(
         if base + NANODET_CH > out.len() {
             break;
         }
-        let score = sigmoid(out[base + PERSON_CLASS]);
+        // The model's class scores are already sigmoid-activated inside the ONNX
+        // graph (traced: ...Conv → Split → Sigmoid → Concat → output), so the raw
+        // output is the person probability — do NOT sigmoid again (that squashed
+        // every score into [0.5, 0.73] and drowned real detections in noise).
+        let score = out[base + PERSON_CLASS];
         if score < score_thr {
             continue;
         }
@@ -643,13 +649,6 @@ frame:5    pts:370688  pts_time:12.345
         let mut bins = [0.0f32; 8];
         bins[5] = 50.0;
         assert!((dfl_expectation(&bins) - 5.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn sigmoid_midpoint_and_bounds() {
-        assert!((sigmoid(0.0) - 0.5).abs() < 1e-6);
-        assert!(sigmoid(20.0) > 0.99);
-        assert!(sigmoid(-20.0) < 0.01);
     }
 
     #[test]

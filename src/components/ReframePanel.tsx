@@ -1,17 +1,21 @@
 import { For, Match, Show, Switch } from "solid-js";
 import {
   autoAnalyzing,
+  autoCorrections,
   autoDetections,
   autoError,
   autoProgress,
+  autoSceneCuts,
   cancelAutoAnalyze,
   chooseRatio,
   chooseStrategy,
+  clearCorrections,
   fillStrategy,
   meta,
   padColor,
   reframeAnchor,
   reframeRatio,
+  runAutoAnalyze,
   setPadColor,
   setReframeAnchor,
 } from "../state";
@@ -35,7 +39,7 @@ const STRATEGIES: { value: FillStrategy; label: string; hint: string }[] = [
   { value: "crop", label: "Crop", hint: "Scale up and crop to the canvas" },
   {
     value: "auto",
-    label: "Auto",
+    label: "Auto-Reframe",
     hint: "Track the subject and pan the crop automatically",
   },
 ];
@@ -50,6 +54,25 @@ export default function ReframePanel() {
   };
 
   const labels = () => anchorLabels(axis());
+
+  // A compact readout of the cached analyze pass, so detection quality is visible
+  // at a glance (frames sampled, shots found, peak face/person confidence).
+  const detectionSummary = () => {
+    const frames = autoDetections();
+    if (!frames) return "";
+    const shots = autoSceneCuts().length + 1;
+    const facePeak = frames.reduce(
+      (a, f) => Math.max(a, ...f.faces.map((d) => d.score), 0),
+      0,
+    );
+    const personPeak = frames.reduce(
+      (a, f) => Math.max(a, ...f.persons.map((d) => d.score), 0),
+      0,
+    );
+    return `${frames.length} frames · ${shots} shots · face ${Math.round(
+      facePeak * 100,
+    )}% · person ${Math.round(personPeak * 100)}%`;
+  };
 
   return (
     <section class="reframe-panel">
@@ -148,18 +171,47 @@ export default function ReframePanel() {
                   </button>
                 </div>
               </Match>
-              <Match when={autoError()}>
-                <span class="error">{autoError()}</span>
-              </Match>
               <Match when={autoDetections()}>
                 <span class="export-encoder">
                   Tracked — the export pans to follow the subject.
                 </span>
+                <span class="export-encoder">{detectionSummary()}</span>
+                <p class="reframe-hint">
+                  Not quite right at a moment? Drag the crop box on the video to
+                  fix it there — the pan eases back to auto on either side.
+                </p>
+                <Show when={autoCorrections().length > 0}>
+                  <div class="controls">
+                    <span class="export-encoder">
+                      {autoCorrections().length} manual fix
+                      {autoCorrections().length === 1 ? "" : "es"}
+                    </span>
+                    <button
+                      type="button"
+                      class="chip"
+                      onClick={() => clearCorrections()}
+                    >
+                      Clear fixes
+                    </button>
+                  </div>
+                </Show>
               </Match>
               <Match when={true}>
-                <span class="export-encoder">
-                  Analyzing the video to follow the subject…
-                </span>
+                <div class="controls">
+                  <button
+                    type="button"
+                    class="chip"
+                    onClick={() => void runAutoAnalyze()}
+                  >
+                    Analyze
+                  </button>
+                  <span class="export-encoder">
+                    Analyze the video to follow the subject.
+                  </span>
+                </div>
+                <Show when={autoError()}>
+                  <span class="error">{autoError()}</span>
+                </Show>
               </Match>
             </Switch>
           </div>

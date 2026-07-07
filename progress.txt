@@ -5,6 +5,57 @@ Format: newest entry on top. Each entry = what I did / what I verified / what
 still needs live-window (npm run tauri dev) testing.
 
 
+2026-07-07 — v2.0.0 prep: auto-reframe usability overhaul + manual override
+---------------------------------------------------------------------------
+Working toward the v2.0.0 release (headline: reframe). ALL UNCOMMITTED — holding
+the batch commit until the manual-override feel is validated live.
+
+Version bumped 1.0.0 -> 2.0.0 (package.json, Cargo.toml, tauri.conf.json,
+Cargo.lock) so the auto-update comparison is meaningful vs the published v1.0.0.
+
+CI fix (committed, ea0d20e): stub src-tauri/models/*.onnx in ci.yml so
+tauri-build's resource-glob validation passes (models are gitignored/runtime).
+
+Auto-reframe (Tier 2) tracking overhaul — driven by inspecting a real analyze
+dump on a hard clip (black-silhouette hero among faced-pineapple decoys):
+- Lag fix: smoothing was a causal EMA (alpha 0.15) = ~2s lag at 3fps. Replaced
+  with ZERO-PHASE forward-backward EMA (per shot), alpha 0.4. No lag; "slides"
+  on fast moves. (autoReframe.ts smooth())
+- NanoDet DOUBLE-SIGMOID bug (found via onnx graph trace: output already ends in
+  Sigmoid). decode_nanodet applied sigmoid AGAIN -> every score squashed into
+  [0.5,0.69], noise floor at sigmoid(0)=0.5 -> ~693 junk boxes/frame. Removed the
+  redundant sigmoid; scores are now true probabilities; threshold 0.4 (was 0.52
+  workaround). Real-people footage benefits most; the silhouette test clip is
+  sparser (30/110 coverage) but correct — manual override covers the gaps.
+  Removed the now-dead sigmoid() fn + its test.
+- Salience rebalanced: (0.3+score) * area^0.25 * centrality * aspect — stops
+  big/edge decoys outranking the subject.
+- Scene-cut tracker reset (buildRawCenters) — a hard cut invalidates the prior
+  subject, so re-select by salience (fixes decoy lock-in across cuts).
+- Median despike (per shot) — kills 1-frame decoy excursions.
+
+UI reorg: FILL chip "Auto" -> "Auto-Reframe"; Analyze button moved into the
+Subject Tracking panel (explicit, not auto-run on select) + detection summary;
+deleted the DevAnalyze (Detect faces dev) component.
+
+MANUAL OVERRIDE (drag-to-fix, auto eases back) — the usability lever:
+- autoReframe.ts: Correction type, correctedCenter (smooth-bump offset field,
+  CORRECTION_EASE=1s), applyCorrections (bakes corrections into the export path).
+- state.ts: autoCorrections signal + add/remove/clear; buildAutoReframe applies
+  corrections (trim-relative), works even with 0 detections (static base path).
+- VideoPlayer: auto crop box now draggable (pauses playback, writes a correction
+  at the playhead on the free axis; box turns blue when corrected).
+- Timeline: diamond markers per correction (click to remove, seeks on press).
+- ReframePanel: drag hint + "N manual fixes" + Clear fixes button.
+
+VERIFIED (local): tsc 0, vitest 52, build ok; cargo test 52, clippy -D warnings clean.
+
+NEEDS LIVE VALIDATION: re-analyze (backend changed) then drag-to-fix a few bad
+moments + export. Confirm drag feel, 1s ease-back length, marker usability. Then
+commit the whole v2 batch + tag v2.0.0 (watch ci.yml AND release.yml — the macOS
+libvpx/libopus build is still unproven).
+
+
 2026-07-02 — 1.0.0 release hardening (audit + tests + CI + macOS WebM)
 ---------------------------------------------------------------------
 User asked to harden before publishing: security+logic audit, tests, and a

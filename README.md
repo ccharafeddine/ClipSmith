@@ -59,13 +59,29 @@ output **canvas**, and you choose how the source fills it:
 - **Blur-fill** — fit the whole frame inside the canvas and fill the leftover
   bars with a blurred, zoomed copy of the video. Nothing is cropped away.
 - **Pad** — the same fit, but solid-color bars (your color, default black).
-- **Crop-to-fill** — scale up and crop to the canvas (a manual, aspect-locked
-  box you drag over the video).
+- **Crop-to-fill** — scale up and crop to the canvas, either a **manual**
+  aspect-locked box you drag, or **Auto-Reframe (subject)**.
 
 Canvas presets are **9:16, 1:1, 4:5, 16:9**, plus **Original** (the source ratio)
 and **Freeform** (an unconstrained crop that exports at the box's size). For
 blur-fill and pad you can position the frame (top/center/bottom or
 left/center/right). The result previews live on the player before you export.
+
+### Auto-Reframe (subject tracking)
+
+Crop-to-fill can follow the action for you. **Auto-Reframe** analyzes the clip
+once for **faces and people** — in-process, with the pure-Rust
+[`tract`](https://github.com/sonos/tract) engine running bundled ONNX detectors,
+so nothing leaves your machine — then pans the crop to keep the subject in shot:
+smoothly within a shot, cutting cleanly at scene changes. Changing the canvas
+ratio re-derives the pan instantly without re-analyzing. A moving box on the
+preview shows exactly what the export will do.
+
+Automatic tracking is best on ordinary footage (real people); it can lose a
+stylized or low-contrast subject. So when a moment isn't framed right, **drag the
+crop box on the video to fix it** — the pan passes through your correction and
+eases back to the automatic track on either side. Each fix drops a marker on the
+timeline (click to remove); corrections are baked into the export.
 
 ## Output formats
 
@@ -94,6 +110,9 @@ hardware is found. An **Auto / Software** toggle lets you force software.
   frame-accurate** — drop them wherever you want.
 - **Reframe** to a new aspect ratio (blur-fill / pad / crop-to-fill, plus
   Original and Freeform), with source positioning and a live preview
+- **Auto-Reframe** — subject tracking that pans the crop to follow faces/people
+  (in-process ONNX detection, nothing leaves your machine), with **drag-to-fix**
+  manual corrections when a moment needs it
 - **Output format** picker (MP4 / MOV / MKV / WebM) — a built-in converter
 - **Hardware-accelerated H.264 export** with a libx264 fallback, or plain
   software encoding; a real progress bar and a reveal-in-folder success state
@@ -104,6 +123,8 @@ hardware is found. An **Auto / Software** toggle lets you force software.
   player doubles as the preview)
 - **Audio controls** — mute the clip or set its volume (0–200%); the preview
   reflects both as you tweak them
+- **Settings + in-app update check** against GitHub Releases (prompt-only, never
+  a silent install) with an optional check on startup
 - **Clear** the loaded video without opening another
 - Dark, minimal interface that fits the window without scrolling
 - Native binaries for macOS and Windows
@@ -201,7 +222,7 @@ invoked as separate sidecar processes:
 ## Roadmap
 
 Shipped in v1.0.0: frame-accurate cutting, **reframe**, format conversion, and
-hardware encoders. The next release, **v2**, builds on reframe. Landed so far:
+hardware encoders. **v2** builds on reframe and is fully landed:
 
 1. ✅ **Settings + auto-update** — a settings panel with an in-app update check
    against GitHub Releases (prompt-only, never a silent install).
@@ -213,10 +234,8 @@ hardware encoders. The next release, **v2**, builds on reframe. Landed so far:
    format, snapping the trim start to a keyframe (no reframe or re-encode).
 4. ✅ **Audio controls** — **Mute** and a per-clip **Volume** (0–200%) on the
    export, mirrored live in the preview.
-
-Still ahead:
-
-5. **Subject-aware auto-reframe** — keep a moving subject in shot.
+5. ✅ **Subject-aware auto-reframe** — track faces/people and pan the crop to
+   keep the subject in shot, with drag-to-fix manual corrections.
 
 On the horizon: code-signing + notarization, done across the app suite.
 Concatenation is no longer a ClipSmith feature — it moved to a separate app,
@@ -228,6 +247,28 @@ Concatenation is no longer a ClipSmith feature — it moved to a separate app,
 as noted above.
 
 ## Release notes
+
+### v2.0.0
+
+The reframe release. ClipSmith learned to **follow the action**, gained export
+controls, and picked up settings + updates. Grab the installers from the
+[v2.0.0 release](https://github.com/ccharafeddine/ClipSmith/releases/tag/v2.0.0).
+
+- **Auto-Reframe (subject tracking)** — crop-to-fill can detect faces and people
+  (in-process, pure-Rust ONNX inference — nothing leaves your machine) and pan
+  the crop to keep the subject in shot, smoothing within a shot and cutting at
+  scene changes. When automatic tracking misses a moment, **drag the crop box to
+  fix it** and the pan eases back to auto; fixes show as timeline markers and are
+  baked into the export. (Automatic tracking is strongest on ordinary real-people
+  footage.)
+- **Export-quality presets** — a **Quality** tier (Draft / Balanced / High) and a
+  **Resolution** cap (Source / 1080p / 720p / 480p).
+- **Lossless mode** — an opt-in `-c copy` export: instant, bit-identical, keeps
+  the source format and all streams (keyframe-snapped trim, no reframe).
+- **Audio controls** — **Mute** and a per-clip **Volume** (0–200%), mirrored in
+  the preview.
+- **Settings + in-app update check** against GitHub Releases (prompt-only), with
+  an optional check on startup.
 
 ### v1.0.0
 

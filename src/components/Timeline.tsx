@@ -1,7 +1,9 @@
 import { createEffect, For, Show } from "solid-js";
 import {
+  autoCorrections,
   currentTime,
   duration,
+  fillStrategy,
   filePath,
   filmstripSrc,
   inPoint,
@@ -10,6 +12,7 @@ import {
   MIN_CLIP,
   nearestKeyframe,
   outPoint,
+  removeCorrection,
   seekTo,
   setFilmstripSrc,
   setInPoint,
@@ -156,6 +159,12 @@ export default function Timeline() {
     return vis.length <= KEYFRAME_TICK_CAP ? vis : [];
   };
 
+  // Manual "drag to fix" corrections in the visible window (Auto-Reframe only).
+  const visibleCorrections = () =>
+    fillStrategy() === "auto"
+      ? autoCorrections().filter((c) => c.t >= viewStart() && c.t <= viewEnd())
+      : [];
+
   const playheadVisible = () =>
     currentTime() >= viewStart() && currentTime() <= viewEnd();
   const zoomed = () => viewSpan() < duration() - 1e-6;
@@ -215,6 +224,23 @@ export default function Timeline() {
               startDrag("out", e);
             }}
           />
+          <For each={visibleCorrections()}>
+            {(c) => (
+              <div
+                class="tl-correction"
+                style={{ left: `${pct(c.t)}%` }}
+                title="Manual fix — click to remove; drag the box to re-place"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  seekTo(c.t);
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeCorrection(c.t);
+                }}
+              />
+            )}
+          </For>
           <Show when={playheadVisible()}>
             <div class="tl-playhead" />
           </Show>

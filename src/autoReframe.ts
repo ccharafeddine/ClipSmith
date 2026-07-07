@@ -48,16 +48,33 @@ export interface PathOptions {
   epsilon?: number;
 }
 
-const boxArea = (d: Detection): number =>
-  Math.max(0, d.x2 - d.x1) * Math.max(0, d.y2 - d.y1);
-
 const boxCenter = (d: Detection): { cx: number; cy: number } => ({
   cx: (d.x1 + d.x2) / 2,
   cy: (d.y1 + d.y2) / 2,
 });
 
-/** Standalone salience: confident *and* large subjects win. */
-const salience = (d: Detection): number => d.score * Math.sqrt(boxArea(d));
+/**
+ * Per-detection salience for subject arbitration. A plain `score·√area` lets a
+ * big low-confidence decoy (the person model emits large spurious blobs) outrank
+ * a confident, centrally-framed subject. Instead this weights four things:
+ *
+ * - **confidence** — the detection's probability (the score is a real 0–1
+ *   probability now the decode's redundant sigmoid is gone), with a `0.3` floor
+ *   so a weak-but-correct box still counts;
+ * - **area**, softened to a fourth root so size helps but never dominates;
+ * - **centrality** — subjects are usually framed near center, so edge decoys
+ *   are penalized;
+ * - **aspect** — a person box is taller than it is wide; squat blobs are demoted.
+ */
+const salience = (d: Detection): number => {
+  const w = Math.max(0, d.x2 - d.x1);
+  const h = Math.max(0, d.y2 - d.y1);
+  const areaTerm = Math.pow(w * h, 0.25);
+  const cx = (d.x1 + d.x2) / 2;
+  const centrality = 1 - Math.min(1, Math.abs(cx - 0.5) / 0.5) * 0.6;
+  const aspect = h >= w ? 1 : 0.6;
+  return (0.3 + d.score) * areaTerm * centrality * aspect;
+};
 
 // How strongly proximity to the previously-tracked center is preferred over
 // raw salience, so the target sticks to one subject instead of flipping.
@@ -121,15 +138,29 @@ function clampCenter(cx: number, cy: number, win: CropWindow): CropPoint {
  * the window, and hold the last center when a frame has no subject (so a
  * detection gap glides instead of snapping to center). Both axes are returned
  * but only the free one varies.
+ *
+ * The tracker resets at each scene cut: a hard cut invalidates the previous
+ * subject's position, so proximity to it is meaningless. Without the reset the
+ * tracker can lock onto a decoy detected just before a cut and then keep
+ * preferring it (its proximity term) over the real subject after the cut. On the
+ * first frame of a new shot we re-select by pure salience instead.
  */
 export function buildRawCenters(
   frames: SubjectFrame[],
   win: CropWindow,
+  sceneCuts: number[] = [],
 ): CropPoint[] {
   const out: CropPoint[] = [];
+  const cuts = [...sceneCuts].sort((a, b) => a - b);
+  let cutIdx = 0;
   let prev: { cx: number; cy: number } | null = null;
   let held: CropPoint = clampCenter(0.5, 0.5, win); // default: centered
   for (const frame of frames) {
+    // Drop the tracker's memory when this frame opens a new shot.
+    while (cutIdx < cuts.length && frame.t >= cuts[cutIdx]) {
+      cutIdx += 1;
+      prev = null;
+    }
     const subject = selectSubject(frame, prev);
     if (subject) {
       const c = boxCenter(subject);
@@ -142,9 +173,84 @@ export function buildRawCenters(
 }
 
 /**
- * Exponential-moving-average smoothing of the free axis, restarted (hard cut) at
- * each scene boundary so a pan doesn't smear a shot change. `sceneCuts` are
- * ascending times; a point at/after the next cut snaps to its raw value.
+ * Median-despike the free axis within each shot: replace each point with the
+ * median of a small window. This kills isolated 1-2 frame excursions — a decoy
+ * that briefly outranks the subject for a frame, then loses again — which a mean
+ * filter would instead smear into a visible wander. Sustained motion passes
+ * through untouched. Reset at scene cuts so a window never straddles a hard cut.
+ */
+export function medianDespike(
+  points: CropPoint[],
+  sceneCuts: number[],
+  freeAxis: "x" | "y" | "none",
+  window = 3,
+): CropPoint[] {
+  if (freeAxis === "none" || points.length === 0) return points.slice();
+  const key = freeAxis === "x" ? "cx" : "cy";
+  const cuts = [...sceneCuts].sort((a, b) => a - b);
+  const out = points.map((p) => ({ ...p }));
+  const k = (window - 1) >> 1;
+  const filterSeg = (lo: number, hi: number) => {
+    const vals = points.slice(lo, hi).map((p) => p[key]);
+    for (let i = 0; i < vals.length; i++) {
+      const win = vals
+        .slice(Math.max(0, i - k), Math.min(vals.length, i + k + 1))
+        .sort((a, b) => a - b);
+      out[lo + i][key] = win[win.length >> 1];
+    }
+  };
+  // Segment into shots, median-filter each independently.
+  let segStart = 0;
+  let cutIdx = 0;
+  for (let i = 0; i < points.length; i++) {
+    let cut = false;
+    while (cutIdx < cuts.length && points[i].t >= cuts[cutIdx]) {
+      cutIdx += 1;
+      cut = true;
+    }
+    if (cut && i > segStart) {
+      filterSeg(segStart, i);
+      segStart = i;
+    }
+  }
+  filterSeg(segStart, points.length);
+  return out;
+}
+
+/**
+ * Zero-phase (forward-backward) EMA smoothing of one shot's free-axis values
+ * in place. A one-pass EMA only ever trails its input, so at 3 fps a smoothing
+ * factor low enough to be steady lags the subject by ~2 s — the crop visibly
+ * chases the subject instead of framing it. Path building is offline (the whole
+ * detection sequence is known up front), so we filter forward then backward over
+ * the result: the two passes' phase lags cancel, leaving a smooth path with no
+ * net delay. Applied per shot so a scene cut isn't smeared across.
+ */
+function smoothSegment(
+  out: CropPoint[],
+  start: number,
+  end: number,
+  key: "cx" | "cy",
+  alpha: number,
+): void {
+  const n = end - start;
+  if (n <= 1) return;
+  const raw = out.slice(start, end).map((p) => p[key]);
+  const fwd = new Array<number>(n);
+  fwd[0] = raw[0];
+  for (let i = 1; i < n; i++) fwd[i] = alpha * raw[i] + (1 - alpha) * fwd[i - 1];
+  const res = new Array<number>(n);
+  res[n - 1] = fwd[n - 1];
+  for (let i = n - 2; i >= 0; i--) {
+    res[i] = alpha * fwd[i] + (1 - alpha) * res[i + 1];
+  }
+  for (let i = 0; i < n; i++) out[start + i][key] = res[i];
+}
+
+/**
+ * Smooth the free axis with a zero-phase EMA, restarted (hard cut) at each scene
+ * boundary so a pan doesn't smear a shot change. `sceneCuts` are ascending times;
+ * a point at/after the next cut opens a new shot, smoothed independently.
  */
 export function smooth(
   points: CropPoint[],
@@ -155,25 +261,22 @@ export function smooth(
   if (freeAxis === "none" || points.length === 0) return points.slice();
   const key = freeAxis === "x" ? "cx" : "cy";
   const cuts = [...sceneCuts].sort((a, b) => a - b);
+  const out = points.map((p) => ({ ...p }));
+  // Smooth each shot [segStart, i) independently, breaking at every scene cut.
+  let segStart = 0;
   let cutIdx = 0;
-  let s = points[0][key];
-  const out: CropPoint[] = [];
-  let firstOfShot = true;
-  for (const p of points) {
-    // Advance past any scene cuts we've reached; the next point restarts the EMA.
+  for (let i = 0; i < out.length; i++) {
     let cut = false;
-    while (cutIdx < cuts.length && p.t >= cuts[cutIdx]) {
+    while (cutIdx < cuts.length && out[i].t >= cuts[cutIdx]) {
       cutIdx += 1;
       cut = true;
     }
-    if (cut || firstOfShot) {
-      s = p[key];
-      firstOfShot = false;
-    } else {
-      s = alpha * p[key] + (1 - alpha) * s;
+    if (cut && i > segStart) {
+      smoothSegment(out, segStart, i, key, alpha);
+      segStart = i;
     }
-    out.push({ ...p, [key]: s });
   }
+  smoothSegment(out, segStart, out.length, key, alpha);
   return out;
 }
 
@@ -269,8 +372,95 @@ export function buildCropPath(
 ): CropPath | null {
   if (frames.length === 0) return null;
   const win = cropWindow(sourceAr, canvasAr);
-  const raw = buildRawCenters(frames, win);
-  const smoothed = smooth(raw, opts.sceneCuts ?? [], opts.alpha ?? 0.15, win.freeAxis);
+  const cuts = opts.sceneCuts ?? [];
+  const raw = buildRawCenters(frames, win, cuts);
+  // Despike single-frame decoy grabs, then zero-phase smooth. 0.4 slides quickly
+  // enough to keep up with a fast subject move (the filter has no lag; a lower
+  // value just attenuates the move so the crop appears to trail), while the
+  // despike + clean detections keep it steady when the subject is still.
+  const despiked = medianDespike(raw, cuts, win.freeAxis);
+  const smoothed = smooth(despiked, cuts, opts.alpha ?? 0.4, win.freeAxis);
   const points = simplify(smoothed, opts.epsilon ?? 0.005, win.freeAxis);
   return { winW: win.winW, winH: win.winH, points };
+}
+
+/** A user "drag to fix" correction: at time `t`, the crop center should be here. */
+export interface Correction {
+  t: number;
+  cx: number;
+  cy: number;
+}
+
+/** Ease window (seconds) either side of a correction over which it blends to auto. */
+export const CORRECTION_EASE = 1.0;
+
+/** Smooth bump kernel: 1 at the correction, 0 at ±`ease`, C¹-continuous between. */
+function correctionWeight(dt: number, ease: number): number {
+  const d = Math.abs(dt) / ease;
+  if (d >= 1) return 0;
+  const b = 1 - d * d;
+  return b * b;
+}
+
+/**
+ * Sample the auto center at `t` with user corrections applied ("drag to fix, auto
+ * eases back"). Each correction contributes an offset from the auto track that
+ * peaks at its own time and fades to zero `ease` seconds away, so the path passes
+ * through the correction and smoothly rejoins auto on either side. Corrections and
+ * `path` must share a time base (both absolute, or both trim-relative).
+ */
+export function correctedCenter(
+  path: CropPath,
+  corrections: Correction[],
+  t: number,
+  ease = CORRECTION_EASE,
+): { cx: number; cy: number } {
+  const auto = sampleCenter(path.points, t);
+  let ox = 0;
+  let oy = 0;
+  for (const c of corrections) {
+    const w = correctionWeight(t - c.t, ease);
+    if (w === 0) continue;
+    const at = sampleCenter(path.points, c.t);
+    ox += (c.cx - at.cx) * w;
+    oy += (c.cy - at.cy) * w;
+  }
+  return { cx: auto.cx + ox, cy: auto.cy + oy };
+}
+
+/**
+ * Bake corrections into a crop path's control points: resample the corrected
+ * center densely around each correction (to capture the eased bump) plus at the
+ * existing control points, then re-simplify. Used to build the export path so it
+ * matches the corrected preview. Returns `path` unchanged when there are no
+ * corrections.
+ */
+export function applyCorrections(
+  path: CropPath,
+  corrections: Correction[],
+  freeAxis: "x" | "y" | "none",
+  ease = CORRECTION_EASE,
+  epsilon = 0.005,
+): CropPath {
+  if (corrections.length === 0 || path.points.length === 0) return path;
+  const first = path.points[0].t;
+  const last = path.points[path.points.length - 1].t;
+  // Sample times: existing control points + a fan around each correction so the
+  // bump isn't simplified away.
+  const times = new Set<number>(path.points.map((p) => p.t));
+  for (const c of corrections) {
+    for (let k = -4; k <= 4; k++) times.add(c.t + (k / 4) * ease);
+  }
+  const sorted = [...times]
+    .filter((t) => t >= first && t <= last)
+    .sort((a, b) => a - b);
+  const resampled: CropPoint[] = sorted.map((t) => ({
+    t,
+    ...correctedCenter(path, corrections, t, ease),
+  }));
+  return {
+    winW: path.winW,
+    winH: path.winH,
+    points: simplify(resampled, epsilon, freeAxis),
+  };
 }

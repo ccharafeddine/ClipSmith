@@ -3,7 +3,6 @@ import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
 import ReframePanel from "./components/ReframePanel";
 import ExportPanel from "./components/ExportPanel";
-import DevAnalyze from "./components/DevAnalyze";
 import Logo from "./components/Logo";
 import SettingsPanel from "./components/SettingsPanel";
 import { initSettings, settingsOpen, setSettingsOpen } from "./settings";
@@ -143,8 +142,6 @@ function App() {
                 <ReframePanel />
               </Show>
               <ExportPanel />
-              {/* TEMPORARY: auto-reframe M1 smoke test; remove at M4. */}
-              <DevAnalyze />
             </aside>
           </div>
         )}

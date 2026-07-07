@@ -1,12 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyCorrections,
   buildCropPath,
   buildRawCenters,
+  correctedCenter,
+  CORRECTION_EASE,
   cropWindow,
+  medianDespike,
   sampleCenter,
   selectSubject,
   simplify,
   smooth,
+  type CropPath,
   type CropPoint,
 } from "./autoReframe";
 import type { Detection, SubjectFrame } from "./ipc";
@@ -104,6 +109,19 @@ describe("buildRawCenters", () => {
     expect(pts[1].cx).toBeCloseTo(pts[0].cx, 5);
     expect(pts[2].cx).toBeCloseTo(pts[0].cx, 5);
   });
+
+  it("resets the tracker at a scene cut so it re-selects by salience", () => {
+    const frames = [
+      frame(0, [], [det(0.8, 0.5, 0.1, 0.9)]), // tracker locks onto the right box
+      frame(1, [], [det(0.8, 0.5, 0.1, 0.9)]),
+      // New shot: a big central subject plus the small right decoy.
+      frame(2, [], [det(0.3, 0.5, 0.4, 0.9), det(0.8, 0.5, 0.1, 0.9)]),
+    ];
+    // Without a cut, proximity to the prior center keeps it on the right decoy.
+    expect(buildRawCenters(frames, win)[2].cx).toBeCloseTo(0.8, 5);
+    // A cut at t=2 drops the tracker's memory; the more salient central box wins.
+    expect(buildRawCenters(frames, win, [2])[2].cx).toBeCloseTo(0.3, 5);
+  });
 });
 
 describe("smooth", () => {
@@ -121,6 +139,20 @@ describe("smooth", () => {
     expect(spread(out.slice(3))).toBeLessThan(0.15);
   });
 
+  it("tracks a steady pan without lag (zero-phase)", () => {
+    // A linear ramp. A one-pass causal EMA (alpha 0.2) trails the raw value by a
+    // constant ~0.08 offset, so its midpoint would sit near 0.32; the zero-phase
+    // forward-backward filter cancels that lag and stays on the line at ~0.40.
+    const ramp: CropPoint[] = Array.from({ length: 21 }, (_, i) => ({
+      t: i,
+      cx: 0.2 + i * 0.02, // 0.20 → 0.60
+      cy: 0.5,
+    }));
+    const mid = smooth(ramp, [], 0.2, "x")[10].cx;
+    expect(mid).toBeGreaterThan(0.37);
+    expect(mid).toBeLessThan(0.43); // on the ramp (0.40), not lagging behind it
+  });
+
   it("hard-cuts (re-snaps) at a scene boundary", () => {
     const pts: CropPoint[] = [
       { t: 0, cx: 0.2, cy: 0.5 },
@@ -130,6 +162,33 @@ describe("smooth", () => {
     ];
     const out = smooth(pts, [2], 0.2, "x");
     // Without a cut, EMA at t=2 would still be near 0.2; the cut snaps it to 0.8.
+    expect(out[2].cx).toBeCloseTo(0.8, 5);
+  });
+});
+
+describe("medianDespike", () => {
+  it("removes a single-frame excursion but keeps sustained motion", () => {
+    const pts: CropPoint[] = [
+      { t: 0, cx: 0.5, cy: 0.5 },
+      { t: 1, cx: 0.5, cy: 0.5 },
+      { t: 2, cx: 0.9, cy: 0.5 }, // 1-frame decoy spike
+      { t: 3, cx: 0.5, cy: 0.5 },
+      { t: 4, cx: 0.5, cy: 0.5 },
+    ];
+    const out = medianDespike(pts, [], "x");
+    expect(out[2].cx).toBeCloseTo(0.5, 5); // spike removed
+  });
+
+  it("does not let the window straddle a scene cut", () => {
+    const pts: CropPoint[] = [
+      { t: 0, cx: 0.2, cy: 0.5 },
+      { t: 1, cx: 0.2, cy: 0.5 },
+      { t: 2, cx: 0.8, cy: 0.5 }, // new shot at the cut
+      { t: 3, cx: 0.8, cy: 0.5 },
+    ];
+    const out = medianDespike(pts, [2], "x");
+    // The first point of the new shot keeps its value (not medianed with the
+    // previous shot's 0.2s).
     expect(out[2].cx).toBeCloseTo(0.8, 5);
   });
 });
@@ -172,6 +231,47 @@ describe("sampleCenter", () => {
 
   it("defaults to center with no points", () => {
     expect(sampleCenter([], 1)).toEqual({ cx: 0.5, cy: 0.5 });
+  });
+});
+
+describe("correctedCenter / applyCorrections", () => {
+  // A flat auto track at cx=0.4 over [0, 10].
+  const path: CropPath = {
+    winW: 0.316,
+    winH: 1,
+    points: [
+      { t: 0, cx: 0.4, cy: 0.5 },
+      { t: 10, cx: 0.4, cy: 0.5 },
+    ],
+  };
+  const corr = [{ t: 5, cx: 0.7, cy: 0.5 }];
+
+  it("passes exactly through the correction at its time", () => {
+    expect(correctedCenter(path, corr, 5).cx).toBeCloseTo(0.7, 6);
+  });
+
+  it("returns the auto value beyond the ease window", () => {
+    expect(correctedCenter(path, corr, 5 + CORRECTION_EASE + 0.01).cx).toBeCloseTo(
+      0.4,
+      6,
+    );
+    expect(correctedCenter(path, corr, 0).cx).toBeCloseTo(0.4, 6);
+  });
+
+  it("eases partially between the correction and the window edge", () => {
+    const half = correctedCenter(path, corr, 5 + CORRECTION_EASE / 2).cx;
+    expect(half).toBeGreaterThan(0.4); // pulled toward the fix
+    expect(half).toBeLessThan(0.7); // but not all the way
+  });
+
+  it("applyCorrections bakes a path that samples through the fix", () => {
+    const out = applyCorrections(path, corr, "x");
+    expect(sampleCenter(out.points, 5).cx).toBeCloseTo(0.7, 2);
+    expect(sampleCenter(out.points, 0).cx).toBeCloseTo(0.4, 2);
+  });
+
+  it("applyCorrections is a no-op without corrections", () => {
+    expect(applyCorrections(path, [], "x")).toBe(path);
   });
 });
 

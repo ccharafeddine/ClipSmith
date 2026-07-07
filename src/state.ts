@@ -18,8 +18,10 @@ import {
   type VideoMeta,
 } from "./ipc";
 import {
+  applyCorrections,
   buildCropPath,
   cropWindow,
+  type Correction,
   type CropPath,
   type CropPoint,
 } from "./autoReframe";
@@ -128,6 +130,35 @@ export const [autoSceneCuts, setAutoSceneCuts] = createSignal<number[]>([]);
 export const [autoAnalyzing, setAutoAnalyzing] = createSignal(false);
 export const [autoProgress, setAutoProgress] = createSignal(0);
 export const [autoError, setAutoError] = createSignal("");
+
+// Manual "drag to fix" corrections to the auto crop path, in **absolute** video
+// time (so they match the preview's currentTime). Each is a center the crop
+// should pass through, easing back to the auto track on either side.
+export const [autoCorrections, setAutoCorrections] = createSignal<Correction[]>([]);
+
+// Two corrections closer than this (seconds) are treated as the same moment, so
+// re-dragging near an existing fix updates it instead of stacking a new one.
+const CORRECTION_MERGE_S = 0.15;
+
+/** Add or replace a correction at time `t` (a nearby existing one is updated). */
+export function addCorrection(t: number, cx: number, cy: number): void {
+  setAutoCorrections((cs) => {
+    const kept = cs.filter((c) => Math.abs(c.t - t) > CORRECTION_MERGE_S);
+    return [...kept, { t, cx, cy }].sort((a, b) => a.t - b.t);
+  });
+}
+
+/** Remove the correction nearest `t` (within the merge window). */
+export function removeCorrection(t: number): void {
+  setAutoCorrections((cs) =>
+    cs.filter((c) => Math.abs(c.t - t) > CORRECTION_MERGE_S),
+  );
+}
+
+/** Drop all manual corrections. */
+export function clearCorrections(): void {
+  setAutoCorrections([]);
+}
 
 // Audio controls. `muted` drops the audio from the export (and the preview);
 // `volume` is a linear gain (1 = unchanged, 0-2 range in the UI) applied on
@@ -271,9 +302,9 @@ export function chooseRatio(ratio: CanvasRatio): void {
 export function chooseStrategy(strategy: FillStrategy): void {
   setFillStrategy(strategy);
   syncCropMode();
-  // Auto crop-to-fill needs the analyze pass; kick it off (cached, so a re-select
-  // or ratio change is free).
-  if (strategy === "auto") void runAutoAnalyze();
+  // Auto-Reframe needs the analyze pass, but it's user-triggered from the Subject
+  // Tracking panel's Analyze button (cached, so a ratio change stays free) rather
+  // than kicked off automatically on select.
 }
 
 /**
@@ -408,6 +439,7 @@ export async function loadVideo(path: string): Promise<void> {
     setAutoAnalyzing(false);
     setAutoProgress(0);
     setAutoError("");
+    setAutoCorrections([]);
 
     // Initialize transport + trim range to the whole clip. VideoPlayer refines
     // duration from the element on loadedmetadata.
@@ -472,6 +504,7 @@ export function closeVideo(): void {
   setAutoAnalyzing(false);
   setAutoProgress(0);
   setAutoError("");
+  setAutoCorrections([]);
   setViewStart(0);
   setViewEnd(0);
   setExportError("");
@@ -697,19 +730,31 @@ function buildAutoReframe(
   const cuts = autoSceneCuts()
     .filter((t) => t > inP && t < outP)
     .map((t) => t - inP);
-  const path = sub.length
+  const win = cropWindow(sourceAr, canvasAr);
+  const tracked = sub.length
     ? buildCropPath(sub, sourceAr, canvasAr, { sceneCuts: cuts })
     : null;
-  if (path && path.points.length) {
-    winW = path.winW;
-    winH = path.winH;
-    points = path.points;
-  } else {
-    const win = cropWindow(sourceAr, canvasAr);
-    winW = win.winW;
-    winH = win.winH;
-    points = [{ t: 0, cx: 0.5, cy: 0.5 }];
-  }
+  // Base path: the tracked path, else a static centered crop spanning the trim
+  // (so corrections have something to bend even with no detections).
+  let path: CropPath =
+    tracked && tracked.points.length
+      ? tracked
+      : {
+          winW: win.winW,
+          winH: win.winH,
+          points: [
+            { t: 0, cx: 0.5, cy: 0.5 },
+            { t: Math.max(0.001, outP - inP), cx: 0.5, cy: 0.5 },
+          ],
+        };
+  // Bake in the user's drag-to-fix corrections (shifted to trim-relative time).
+  const corr = autoCorrections()
+    .filter((c) => c.t >= inP && c.t <= outP)
+    .map((c) => ({ ...c, t: c.t - inP }));
+  if (corr.length) path = applyCorrections(path, corr, win.freeAxis);
+  winW = path.winW;
+  winH = path.winH;
+  points = path.points;
 
   const cropW = evenInt(winW * m.width);
   const cropH = evenInt(winH * m.height);
