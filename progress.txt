@@ -5,10 +5,13 @@ Format: newest entry on top. Each entry = what I did / what I verified / what
 still needs live-window (npm run tauri dev) testing.
 
 
-2026-07-07 — v2.0.0 prep: auto-reframe usability overhaul + manual override
----------------------------------------------------------------------------
-Working toward the v2.0.0 release (headline: reframe). ALL UNCOMMITTED — holding
-the batch commit until the manual-override feel is validated live.
+2026-07-07 — v2.0.0 SHIPPED: auto-reframe usability overhaul + manual override
+-----------------------------------------------------------------------------
+The v2.0.0 release (headline: reframe). Committed (59028d2), tagged v2.0.0,
+pushed; ci.yml green (one transient apt/packages.microsoft.com failure, re-run
+passed); release.yml built BOTH installers — Windows .msi/.exe and the macOS
+universal .dmg (the from-source libvpx/libopus build worked). Release published
+as Latest with notes. v1.0.0 users will now see the update prompt.
 
 Version bumped 1.0.0 -> 2.0.0 (package.json, Cargo.toml, tauri.conf.json,
 Cargo.lock) so the auto-update comparison is meaningful vs the published v1.0.0.
@@ -49,11 +52,15 @@ MANUAL OVERRIDE (drag-to-fix, auto eases back) — the usability lever:
 - ReframePanel: drag hint + "N manual fixes" + Clear fixes button.
 
 VERIFIED (local): tsc 0, vitest 52, build ok; cargo test 52, clippy -D warnings clean.
+VERIFIED (CI/release): ci.yml green; release.yml built + published v2.0.0.
 
-NEEDS LIVE VALIDATION: re-analyze (backend changed) then drag-to-fix a few bad
-moments + export. Confirm drag feel, 1s ease-back length, marker usability. Then
-commit the whole v2 batch + tag v2.0.0 (watch ci.yml AND release.yml — the macOS
-libvpx/libopus build is still unproven).
+FOLLOW-UPS (post-v2.0.0, still within v2):
+- Auto-reframe tracking on hard/stylized subjects (silhouettes) is imperfect;
+  the manual drag-to-fix override is the usability backstop. Tune further.
+- Double-sigmoid fix helps real-people footage most; re-validate tracking
+  quality on real-people clips and tune PERSON_SCORE_THR / salience if needed.
+- Code-signing + notarization (suite-wide) so the Gatekeeper/SmartScreen
+  workarounds go away.
 
 
 2026-07-02 — 1.0.0 release hardening (audit + tests + CI + macOS WebM)
