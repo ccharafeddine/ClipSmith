@@ -6,6 +6,15 @@
 
 <p align="center">Cut, reframe, and convert a clip out of any video — frame-accurate.</p>
 
+<p align="center">
+  <a href="https://github.com/ccharafeddine/ClipSmith/releases/latest"><img src="https://img.shields.io/github/v/release/ccharafeddine/ClipSmith?sort=semver&color=007aff" alt="Latest release" /></a>
+  <a href="https://github.com/ccharafeddine/ClipSmith/actions/workflows/ci.yml"><img src="https://github.com/ccharafeddine/ClipSmith/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/ccharafeddine/ClipSmith/releases"><img src="https://img.shields.io/github/downloads/ccharafeddine/ClipSmith/total?color=success" alt="Downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ccharafeddine/ClipSmith?color=blue" alt="License: GPL-3.0" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey" alt="Platforms: macOS | Windows" />
+  <img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20SolidJS-24c8db" alt="Built with Tauri + SolidJS" />
+</p>
+
 ---
 
 ClipSmith is a small, fast desktop app for Mac and Windows. Open a local video
