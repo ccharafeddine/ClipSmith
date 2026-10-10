@@ -7,6 +7,7 @@ mod filmstrip;
 mod formats;
 mod keyframes;
 mod probe;
+mod scrape;
 mod update;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

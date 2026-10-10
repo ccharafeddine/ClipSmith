@@ -5,6 +5,54 @@ Format: newest entry on top. Each entry = what I did / what I verified / what
 still needs live-window (npm run tauri dev) testing.
 
 
+2026-10-10 (round 2) - URL import: any-site fallback + source quality
+-----------------------------------------------------------------------------
+- scrape.rs: + data-* lazy attrs, typed <source> (HLS/DASH MIME), preload
+  links, twitter:player / og:video embeds, JSON-LD VideoObject (@graph/arrays),
+  absolute media URLs in scripts (\/ + \u002F), Dean Edwards p,a,c,k,e,d
+  unpacker, iframes (junk frames skipped), ad/thumbnail filtering, resolution
+  ranking (1080p / WxH / label/res/height), best_hls_variant (highest
+  res+bandwidth variant + matching audio group).
+- commands.rs: yt-dlp -f bv*[acodec=none]+ba/b/bv*+ba -S res,fps,br
+  --merge-output-format mp4/mkv (no 1080p cap); fallback order: page media
+  (3) -> embeds (3): yt-dlp --referer, then one embed-page scrape. ffmpeg
+  per-input UA + Referer + Origin, network-only protocols, -c copy. Shared
+  building blocks + #[ignore] live_download_harness.
+- Bundled yt-dlp refreshed 2026.06.09 -> 2026.08.19 (gitignored binary).
+
+LIVE (harness, ffprobe + 30-frame decode OK)
+- w3schools html5_video: yt-dlp, h264 320x176 (only rendition).
+- test-streams.mux.dev: yt-dlp unsupported -> scrape -> HLS fhd variant,
+  h264 1920x1080, 634s.
+- streamable.com/moo: yt-dlp, h264 852x480 (only format).
+- Vimeo: 403 on vimeo.com from this IP; player embed formats are DRM'd.
+
+GAPS
+- JS-rendered players (nothing in raw HTML), DRM, logins/captchas.
+
+2026-10-10 - URL import: HTML scrape fallback (branch feat/url-scrape-fallback, uncommitted)
+-----------------------------------------------------------------------------
+- New src-tauri/src/scrape.rs: pure extract_candidates(html, page_url) ->
+  ranked Vec<Candidate>. Finds <video src>/<source src>, og:video(:url|
+  :secure_url)/twitter:player:stream meta, and .m3u8/.mpd URLs (incl. JSON
+  \/-escaped). Resolves relative URLs, unescapes &amp;, http/https only,
+  dedupes, ranks direct file > HLS > DASH > unknown. regex crate added.
+- commands.rs: when yt-dlp fails with "Unsupported URL" / "No video formats
+  found", scrape_fallback fetches the page (browser UA, 20s timeout, 5MB cap,
+  cancellable), tries up to 3 candidates: files via download_direct, streams
+  via ffmpeg sidecar (-protocol_whitelist http,https,tcp,tls,crypto, Referer +
+  UA, -c copy -> source.mp4, -fs cap, cancel, progress from Duration/time=,
+  cleanup on failure). Nothing found -> original "site isn't supported" text.
+- cutter::parse_progress_time made pub(crate) for reuse.
+
+VERIFIED
+- cargo test, cargo clippy --all-targets -D warnings, cargo fmt --check,
+  npm run typecheck, npm test.
+
+NEEDS LIVE TESTING
+- End-to-end against real pages (plain <video> page, HLS page, DASH page).
+  JS-rendered players, DRM streams, and cookie/login-gated pages won't work.
+
 2026-07-07 — v2.0.0 SHIPPED: auto-reframe usability overhaul + manual override
 -----------------------------------------------------------------------------
 The v2.0.0 release (headline: reframe). Committed (59028d2), tagged v2.0.0,

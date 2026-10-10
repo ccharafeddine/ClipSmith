@@ -142,7 +142,10 @@ export function defaultSavePath(filename: string): Promise<string> {
 /**
  * Download a video from a URL and resolve to its local temp path. Direct file
  * links are fetched over HTTP; everything else goes through the bundled yt-dlp
- * sidecar. Emits "download-progress" events (0.0-1.0) while running.
+ * sidecar; if yt-dlp has no extractor for the page, the backend falls back to
+ * scraping the page (video tags, data attributes, JSON-LD, script and packed-JS
+ * URLs, embedded players). Downloads are at source quality. Emits
+ * "download-progress" events (0.0-1.0) while running.
  */
 export function downloadVideo(url: string): Promise<string> {
   return invoke<string>("download_video", { url });
