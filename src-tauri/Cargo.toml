@@ -38,4 +38,10 @@ tokio = { version = "1", features = ["time", "macros"] }
 # bundled face/person detectors. tract compiles into the binary — no native
 # ONNX Runtime lib to bundle per platform. MIT/Apache-2.0, GPL-3.0-compatible.
 tract-onnx = "0.23"
+# URL-import scrape fallback: pull video/HLS/DASH links out of page HTML.
+# Already in the tree transitively; MIT/Apache-2.0.
+regex = "1"
 
+[dev-dependencies]
+# Runtime for the #[ignore]d live download harness in commands.rs tests.
+tokio = { version = "1", features = ["rt", "time", "macros"] }

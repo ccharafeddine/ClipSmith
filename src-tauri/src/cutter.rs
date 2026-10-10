@@ -535,7 +535,7 @@ fn push_bounded(buf: &mut String, chunk: &str) {
 
 /// Parse the seconds value out of an ffmpeg progress line's `time=HH:MM:SS.xx`
 /// field. Returns `None` for lines without a parseable timestamp (e.g. `N/A`).
-fn parse_progress_time(s: &str) -> Option<f64> {
+pub(crate) fn parse_progress_time(s: &str) -> Option<f64> {
     let idx = s.rfind("time=")?;
     let token: String = s[idx + 5..]
         .chars()

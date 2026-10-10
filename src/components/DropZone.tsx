@@ -5,7 +5,8 @@ import { ALLOWED_EXTENSIONS, loadVideo, loading } from "../state";
 import { downloadVideo, cancelDownload } from "../ipc";
 
 // Click-to-open zone plus a URL field that imports remote videos (YouTube and
-// other sites via the bundled yt-dlp, or a direct link to a video file). The
+// other sites via the bundled yt-dlp, a direct link to a video file, or - as a
+// fallback - a video scraped from the page or its embedded player). The
 // download lands in an OS temp file that's then loaded as an ordinary source.
 export default function DropZone() {
   const [url, setUrl] = createSignal("");
@@ -82,7 +83,7 @@ export default function DropZone() {
           <input
             type="text"
             class="url-input"
-            placeholder="or paste a video URL (YouTube, etc.)"
+            placeholder="or paste a link to any video page"
             value={url()}
             onInput={(e) => setUrl(e.currentTarget.value)}
             disabled={busy()}
