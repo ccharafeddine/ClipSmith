@@ -68,31 +68,35 @@ export default function DropZone() {
   const acceptedHint = `Accepted: ${ALLOWED_EXTENSIONS.join(", ").toUpperCase()}`;
 
   return (
-    <div class="loader">
-      <div class="loader-row">
-        <button
-          class="upload-btn"
-          onClick={pick}
-          disabled={busy()}
-          title={acceptedHint}
-        >
-          {loading() ? "Loading…" : "Upload"}
-        </button>
+    <div class="loader sm-panel smith-drop">
+      <div class="sm-empty__art" aria-hidden="true">[ ]</div>
+      <h3 class="smith-drop-title">Open a video to start</h3>
+      <p class="smith-drop-sub">Trim, reframe and export clips. Local files never leave this computer.</p>
+      <button
+        class="sm-btn sm-btn--primary sm-btn--lg upload-btn"
+        onClick={pick}
+        disabled={busy()}
+        title={acceptedHint}
+      >
+        {loading() ? "Loading…" : "Open video…"}
+      </button>
+      <p class="smith-drop-formats">{ALLOWED_EXTENSIONS.map((e) => e.toUpperCase()).join(" · ")}</p>
 
-        <form class="url-row" onSubmit={loadFromUrl}>
-          <input
-            type="text"
-            class="url-input"
-            placeholder="or paste a link to any video page"
-            value={url()}
-            onInput={(e) => setUrl(e.currentTarget.value)}
-            disabled={busy()}
-          />
-          <button type="submit" disabled={busy() || !url().trim()}>
-            {downloading() ? "Downloading…" : "Load"}
-          </button>
-        </form>
-      </div>
+      <div class="smith-or"><span>or paste a link · optional, needs internet</span></div>
+      <form class="url-row" onSubmit={loadFromUrl}>
+        <input
+          type="text"
+          class="url-input"
+          placeholder="https://…"
+          aria-label="Video link"
+          value={url()}
+          onInput={(e) => setUrl(e.currentTarget.value)}
+          disabled={busy()}
+        />
+        <button class="sm-btn" type="submit" disabled={busy() || !url().trim()}>
+          {downloading() ? "Downloading…" : "Fetch"}
+        </button>
+      </form>
 
       <Show when={downloading()}>
         <div class="dl-progress-row">

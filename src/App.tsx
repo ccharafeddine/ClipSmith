@@ -3,7 +3,7 @@ import DropZone from "./components/DropZone";
 import VideoPlayer from "./components/VideoPlayer";
 import ReframePanel from "./components/ReframePanel";
 import ExportPanel from "./components/ExportPanel";
-import Logo from "./components/Logo";
+import Wordmark from "./smith/Wordmark";
 import SettingsPanel from "./components/SettingsPanel";
 import { initSettings, settingsOpen, setSettingsOpen } from "./settings";
 import {
@@ -20,6 +20,7 @@ import {
 } from "./state";
 import { formatDuration } from "./format";
 import "./App.css";
+import "./smith/shell.css";
 
 // Don't hijack keys while the user is typing in a field.
 function isFormControl(el: EventTarget | null): boolean {
@@ -77,10 +78,20 @@ function App() {
 
   return (
     <main class="container">
-      <header class="app-header">
-        {/* Three columns keep the logo centered while the gear sits top-right. */}
-        <span class="app-header-spacer" />
-        <Logo />
+      <header class="app-header sm-topbar">
+        <Wordmark />
+        <span class="smith-vsep" />
+        <nav class="smith-steps" aria-label="Steps">
+          <span classList={{ on: !meta() }}>1. Open</span>
+          <span aria-hidden="true">›</span>
+          <span classList={{ on: !!meta() }}>2. Trim &amp; reframe</span>
+          <span aria-hidden="true">›</span>
+          <span>3. Export</span>
+        </nav>
+        <span class="smith-grow" />
+        <span class="sm-chip" title="Opening, trimming and exporting local files never needs the internet">
+          <i class="smith-dot" /> Works offline
+        </span>
         <button
           type="button"
           class="settings-gear"
