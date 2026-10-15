@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-app="clipsmith">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/clipsmith.svg" />
+    <title>ClipSmith: trim and reframe video in your browser</title>
+    <script type="module" crossorigin src="/assets/clip-fgNugftd.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/clip-D54NwVY6.css">
+      <meta name="description" content="Trim, reframe to 9:16, 1:1 or 16:9 and export MP4, MP3 or GIF, entirely in your browser. Nothing is uploaded." />
+    <link rel="canonical" href="https://clip.chafic.me/" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://clip.chafic.me/" />
+    <meta property="og:title" content="ClipSmith: trim and reframe video in your browser" />
+    <meta property="og:description" content="Trim, reframe to 9:16, 1:1 or 16:9 and export MP4, MP3 or GIF, entirely in your browser. Nothing is uploaded." />
+    <meta property="og:image" content="https://clip.chafic.me/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://clip.chafic.me/og.png" />
+  </head>
+  <body class="sm-app">
+    <main class="page">
+      <section class="stage">
+        <label class="sm-drop drop-card" id="drop">
+          <input type="file" id="file" accept="video/*,.mkv" hidden />
+          <span class="sm-empty__art" aria-hidden="true">[ ]</span>
+          <h3>Open a video to clip</h3>
+          <p>Trim, reframe and export MP4, MP3 or GIF right here. The file never leaves this device.</p>
+          <span class="sm-btn sm-btn--primary sm-btn--lg">Open video…</span>
+          <small>MP4 · MOV · WEBM · MKV, up to 500 MB · or drop it anywhere</small>
+          <button type="button" class="sm-btn sm-btn--ghost sm-btn--sm" id="sample">Try the sample clip</button>
+        </label>
+        <div class="player" id="player" hidden>
+          <video id="video" controls playsinline></video>
+        </div>
+        <p class="meta sm-num" id="meta" hidden></p>
+      </section>
+      <aside class="panel sm-panel" id="panel" hidden>
+        <div class="sm-panel__head">Trim</div>
+        <div class="grid2">
+          <label class="sm-field"><span>Start (s)</span><input class="sm-input sm-num" id="start" type="number" min="0" step="0.1" value="0" /></label>
+          <label class="sm-field"><span>End (s)</span><input class="sm-input sm-num" id="end" type="number" min="0" step="0.1" value="0" /></label>
+          <button type="button" class="sm-btn sm-btn--sm" id="setIn">Start at playhead</button>
+          <button type="button" class="sm-btn sm-btn--sm" id="setOut">End at playhead</button>
+        </div>
+        <p class="hint sm-num" id="len"></p>
+        <div class="sm-panel__head">Reframe</div>
+        <div class="sm-seg" id="ratio" role="group"><button type="button" data-v="0" aria-pressed="true">Original</button><button type="button" data-v="0.5625" aria-pressed="false">9:16</button><button type="button" data-v="1" aria-pressed="false">1:1</button><button type="button" data-v="1.7778" aria-pressed="false">16:9</button></div>
+        <div class="sm-panel__head">Format</div>
+        <div class="sm-seg" id="fmt" role="group"><button type="button" data-v="mp4" aria-pressed="true">MP4 video</button><button type="button" data-v="mp3" aria-pressed="false">MP3 audio</button><button type="button" data-v="gif" aria-pressed="false">GIF</button></div>
+        <p class="hint">MP4 is H.264 + AAC, up to 720p in the browser.</p>
+        <button type="button" class="sm-btn sm-btn--primary sm-btn--lg go" id="go">Export clip</button>
+        <div class="status" id="status" hidden><span class="st-text"></span><div class="sm-progress" hidden><i></i></div></div>
+        <div class="result" id="result" hidden></div>
+      </aside>
+    </main>
+  </body>
+</html>

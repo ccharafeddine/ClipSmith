@@ -12,3 +12,6 @@ src-tauri/binaries/*
 # ONNX detector models for auto-reframe — fetched by scripts/fetch-models.sh,
 # never committed (binary, ~6MB). CI must run the fetch before bundling.
 src-tauri/models/*.onnx
+
+# Standalone web build for clip.chafic.me (see web/README.md)
+!web/dist/

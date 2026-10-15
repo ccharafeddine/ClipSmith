@@ -350,3 +350,7 @@ Initial release: frame-accurate H.264 / AAC `.mp4` cut with an optional crop, a
 zoomable timeline with filmstrip thumbnails and free trim handles, URL import via
 a bundled yt-dlp, and an automatic playback proxy for codecs the webview can't
 decode. (This is where the `libx264` re-encode relicensed the app to GPL-3.0.)
+
+## Web demo
+
+A standalone static build for https://clip.chafic.me/ is in [`web/dist/`](web/dist). See [`web/README.md`](web/README.md) for the required headers and how to rebuild it.
