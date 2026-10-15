@@ -460,18 +460,81 @@ fn ffmpeg_path() -> std::io::Result<PathBuf> {
 
 /// Map a yt-dlp stderr dump to a clear, user-facing message. Raw stderr is kept
 /// only as a one-line fallback for failures we don't specifically recognize.
+/// Specific causes are checked before the generic network bucket, since many
+/// of them also mention "HTTP Error".
 fn friendly_ytdlp_error(stderr: &str) -> String {
     let lower = stderr.to_lowercase();
-    if lower.contains("unsupported url") {
+    let has = |needles: &[&str]| needles.iter().any(|n| lower.contains(n));
+    if has(&["unsupported url"]) {
         UNSUPPORTED_SITE.to_string()
-    } else if lower.contains("unable to download webpage")
-        || lower.contains("failed to resolve")
-        || lower.contains("getaddrinfo")
-        || lower.contains("connection")
-        || lower.contains("timed out")
-        || lower.contains("network is unreachable")
-        || lower.contains("http error")
-    {
+    } else if has(&["private video", "this video is private"]) {
+        "That video is private, so it can't be downloaded.".to_string()
+    } else if has(&["members-only", "members only", "join this channel"]) {
+        "That video is for channel members only.".to_string()
+    } else if has(&[
+        "confirm your age",
+        "age-restricted",
+        "age restricted",
+        "inappropriate for some users",
+    ]) {
+        "That video is age-restricted and needs a signed-in account, which ClipSmith doesn't use."
+            .to_string()
+    } else if has(&[
+        "sign in to confirm you",
+        "login required",
+        "requires authentication",
+        "use --cookies",
+        "account cookies",
+    ]) {
+        "That site wants you to sign in before it will share the video. Try another link or download it in your browser.".to_string()
+    } else if has(&[
+        "not available in your country",
+        "made this video available in your country",
+        "geo restrict",
+        "geo-restrict",
+        "blocked it in your country",
+    ]) {
+        "That video isn't available in your region.".to_string()
+    } else if has(&["drm", "protected by digital rights"]) {
+        "That video is DRM-protected and can't be downloaded.".to_string()
+    } else if has(&[
+        "this live event will begin",
+        "premieres in",
+        "live event will begin",
+    ]) {
+        "That stream hasn't started yet. Try again once it's live or finished.".to_string()
+    } else if has(&[
+        "video unavailable",
+        "has been removed",
+        "no longer available",
+        "does not exist",
+        "http error 404",
+        "http error 410",
+    ]) {
+        "That video is unavailable. It may have been removed, or the link is wrong.".to_string()
+    } else if has(&[
+        "http error 429",
+        "too many requests",
+        "rate-limit",
+        "rate limit",
+    ]) {
+        "The site is rate-limiting downloads right now. Wait a few minutes and try again."
+            .to_string()
+    } else if has(&["http error 403", "forbidden"]) {
+        "The site refused the download (HTTP 403). It may have changed recently; check Settings for a ClipSmith update.".to_string()
+    } else if has(&["no space left", "disk full", "not enough space"]) {
+        "Your disk is full. Free up some space and try again.".to_string()
+    } else if has(&["requested format is not available"]) {
+        "That video isn't offered in a downloadable format.".to_string()
+    } else if has(&[
+        "unable to download webpage",
+        "failed to resolve",
+        "getaddrinfo",
+        "connection",
+        "timed out",
+        "network is unreachable",
+        "http error",
+    ]) {
         "Couldn't reach that link. Check the URL and your connection.".to_string()
     } else {
         let summary = stderr
@@ -484,6 +547,40 @@ fn friendly_ytdlp_error(stderr: &str) -> String {
         } else {
             format!("Download failed: {summary}")
         }
+    }
+}
+
+#[cfg(test)]
+mod friendly_error_tests {
+    use super::friendly_ytdlp_error as f;
+
+    #[test]
+    fn specific_causes_beat_the_network_bucket() {
+        let cases = [
+            ("ERROR: [youtube] abc: Private video. Sign in if you've been granted access", "private"),
+            ("ERROR: [youtube] abc: Join this channel to get access to members-only content", "members only"),
+            ("ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate for some users.", "age-restricted"),
+            ("ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies-from-browser", "sign in"),
+            ("ERROR: [x] 1: The uploader has not made this video available in your country", "region"),
+            ("ERROR: [y] 2: This video is DRM protected", "DRM"),
+            ("ERROR: [youtube] abc: This live event will begin in 3 hours.", "hasn't started"),
+            ("ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader", "unavailable"),
+            ("ERROR: unable to download video data: HTTP Error 429: Too Many Requests", "rate-limiting"),
+            ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "403"),
+            ("ERROR: unable to write data: [Errno 28] No space left on device", "disk is full"),
+            ("ERROR: [vimeo] 1: Requested format is not available", "format"),
+            ("ERROR: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>", "Couldn't reach"),
+            ("ERROR: Unable to download webpage: HTTP Error 404: Not Found", "unavailable"),
+        ];
+        for (stderr, want) in cases {
+            let got = f(stderr);
+            assert!(
+                got.contains(want),
+                "{stderr:?} -> {got:?} (wanted {want:?})"
+            );
+        }
+        assert_eq!(f(""), "Download failed.");
+        assert_eq!(f("weird\nlast line \n"), "Download failed: last line");
     }
 }
 
