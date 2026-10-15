@@ -1,0 +1,3 @@
+/* Web-only tweaks for the browser build. Keep this tiny: the UI is the app's own. */
+/* Saved clips are browser downloads; there is no folder to open. */
+.export-reveal { display: none; }

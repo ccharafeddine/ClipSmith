@@ -1,0 +1,33 @@
+{
+  "name": "ClipSmith",
+  "repo": "https://github.com/ccharafeddine/ClipSmith",
+  "url": "https://clip.chafic.me/",
+  "title": "ClipSmith: trim and reframe video in your browser",
+  "description": "Trim, reframe to 9:16, 1:1 or 16:9 and export MP4, MOV, MKV or WebM, entirely in your browser. Nothing is uploaded.",
+  "fonts": false,
+  "assets": [
+    [
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+      "ort/ort-wasm-simd-threaded.wasm"
+    ],
+    [
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+      "ort/ort-wasm-simd-threaded.mjs"
+    ],
+    [
+      "src-tauri/models/ultraface-320.onnx",
+      "models/ultraface-320.onnx"
+    ],
+    [
+      "src-tauri/models/nanodet-plus-m-416.onnx",
+      "models/nanodet-plus-m-416.onnx"
+    ]
+  ],
+  "relabel": [
+    [
+      "src/formats.ts",
+      "detail: \"VP9 · Opus\"",
+      "detail: \"VP8 · Opus (browser)\""
+    ]
+  ]
+}
