@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="src/assets/clipsmith-icon.svg" width="128" alt="ClipSmith" />
+  <img src="docs/brand/clipsmith.svg" width="128" alt="ClipSmith logo" />
 </p>
 
 <h1 align="center">ClipSmith</h1>
 
-<p align="center">Cut, reframe, and convert a clip out of any video — frame-accurate.</p>
+<p align="center">Trim, reframe and export clips from any local video. Frame-accurate, fully offline.</p>
 
 <p align="center">
   <a href="https://github.com/ccharafeddine/ClipSmith/releases/latest"><img src="https://img.shields.io/github/v/release/ccharafeddine/ClipSmith?sort=semver&color=007aff" alt="Latest release" /></a>
@@ -32,7 +32,31 @@ Built with [Tauri](https://v2.tauri.app) and [SolidJS](https://www.solidjs.com),
 with a bundled GPL build of [FFmpeg](https://ffmpeg.org) (`libx264`, plus `libvpx`
 and `libopus` for WebM) for probing, thumbnails, and the export.
 
-<!-- Screenshots go here. -->
+<p align="center">
+  <img src="docs/screenshots/desktop-empty.png" width="90%" alt="ClipSmith start screen in the v2 design" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-app.png" width="90%" alt="The packaged ClipSmith debug build on Windows" />
+</p>
+
+## Works offline
+
+Every feature has a local path. You never need an internet connection or an account.
+
+- Opening, trimming, reframing (including auto-reframe; its ONNX models are bundled) and exporting all run locally with the bundled FFmpeg.
+- Link import is optional and is the only feature that uses the network. The empty state labels it "optional, needs internet".
+- Fonts (Inter, Syne) and icons ship inside the app. Nothing loads from a CDN.
+
+## Web demo
+
+A browser version lives in the [MediaSmith repo](https://github.com/ccharafeddine/media-smith) (branch `design/v2-impl` until it is merged) under
+`apps/smiths-web` (page `clip.html`). It runs on ffmpeg.wasm with local files only: no
+server and no uploads. In the browser you can open or drop a local file, trim (typed or from the playhead), reframe (original, 9:16, 1:1 or 16:9 centre crop) and export MP4 (H.264 + AAC, up to 720p), MP3 or GIF. Only the desktop app has
+link import, auto-reframe, hardware encoders, any length or resolution. See MediaSmith `docs/web.md` for the build and hosting notes.
+
+<p align="center">
+  <img src="docs/screenshots/web-demo.png" width="90%" alt="ClipSmith web demo" />
+</p>
 
 ## How export works
 
