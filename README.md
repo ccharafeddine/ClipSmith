@@ -281,6 +281,21 @@ as noted above.
 
 ## Release notes
 
+### v2.2.0
+
+The v2 design release. ClipSmith now matches the rest of the Smith suite. Grab the
+installers from the [v2.2.0 release](https://github.com/ccharafeddine/ClipSmith/releases/tag/v2.2.0).
+
+- **New look:** the Smith v2 design system with the Inter font and a new logo
+  and icons. The top bar shows the Open, Trim and Export steps, and a
+  "Works offline" chip.
+- **Clearer start screen:** "Open video…" comes first, and link import is
+  labelled optional, since local files never need the internet.
+- **Clearer link-import errors:** common yt-dlp failures (private, region-locked
+  or removed videos) now get plain-language messages.
+- **Try it in a browser:** a web demo (trim, reframe and export MP4, MP3 or GIF
+  with ffmpeg.wasm) lives in the MediaSmith repo under `apps/smiths-web`.
+
 ### v2.0.0
 
 The reframe release. ClipSmith learned to **follow the action**, gained export
