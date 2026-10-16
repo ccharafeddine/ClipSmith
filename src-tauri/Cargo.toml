@@ -41,6 +41,9 @@ tract-onnx = "0.23"
 # URL-import scrape fallback: pull video/HLS/DASH links out of page HTML.
 # Already in the tree transitively; MIT/Apache-2.0.
 regex = "1"
+# Shared URL download engine (yt-dlp, scraper, sniff mode, cookies), from the
+# MediaSmith repo so all Smith apps share one implementation.
+smith-fetch = { git = "https://github.com/ccharafeddine/media-smith", rev = "5d784f70c9b2d037cd1da291cf0a6f2f8060c0f2", features = ["tauri"] }
 
 [dev-dependencies]
 # Runtime for the #[ignore]d live download harness in commands.rs tests.

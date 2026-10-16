@@ -134,10 +134,20 @@ hardware is found. An **Auto / Software** toggle lets you force software.
 ## Features
 
 - Open `mp4`, `mov`, `mkv`, `webm`, `avi`, `m4v` via file picker
-- **Import from a URL** — paste a YouTube (or other site) link and ClipSmith
-  fetches the video with a bundled [yt-dlp](https://github.com/yt-dlp/yt-dlp);
-  direct links to a video file are downloaded over plain HTTP. A progress bar
-  and Cancel button show while it downloads. Video and audio are kept.
+- **Import from a URL** (desktop app): paste a link and ClipSmith fetches it
+  with the shared smith-fetch engine: a bundled [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+  that keeps itself up to date (checksum-verified, with an update-and-retry when a
+  site changes), plain HTTP for direct video files, HLS/DASH manifests, and a page
+  scraper for generic players. *Quality & options…* offers a format picker,
+  opt-in playlists (max 50) and live recording with Stop. *Browse page…* opens the
+  page in a built-in window and lists the videos it plays. Sites that need a login
+  get *Sign in to this site…*; Settings → Downloads covers browser cookies,
+  cookies.txt import, saved sign-ins, updates and an off-by-default clipboard watcher.
+  DRM-protected video is detected and never saved.
+
+  **Legal:** only download videos you have the right to save (your own, openly
+  licensed, or with the owner's permission) and respect each site's terms of
+  service. ClipSmith does not circumvent DRM.
 - A timeline with **filmstrip thumbnails** and iOS-style trim handles,
   **zoomable** (scroll to zoom, cursor-anchored). **Both handles are free and
   frame-accurate** — drop them wherever you want.
