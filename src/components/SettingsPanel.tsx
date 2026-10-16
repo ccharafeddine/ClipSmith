@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   appVersion,
   checkOnStartup,
@@ -59,6 +60,8 @@ export default function SettingsPanel() {
           </span>
         </div>
 
+        {/* Updates are desktop-only; the web demo always serves the latest build. */}
+        <Show when={isTauri()}>
         <div class="field">
           <span class="field-label">Updates</span>
           <div class="settings-update-row">
@@ -109,6 +112,7 @@ export default function SettingsPanel() {
             <span>Check for updates on startup</span>
           </label>
         </div>
+        </Show>
       </div>
     </div>
   );

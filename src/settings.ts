@@ -5,6 +5,7 @@
 
 import { createSignal } from "solid-js";
 import { getVersion } from "@tauri-apps/api/app";
+import { isTauri } from "@tauri-apps/api/core";
 import { checkForUpdate, type UpdateInfo } from "./ipc";
 
 /** localStorage key for the "check for updates on startup" preference. */
@@ -63,7 +64,8 @@ export async function loadAppVersion(): Promise<void> {
  * ignored while one is in flight.
  */
 export async function runUpdateCheck(silent = false): Promise<void> {
-  if (updateChecking()) return;
+  // Updates are a desktop concern: the web demo is always the latest build.
+  if (!isTauri() || updateChecking()) return;
   setUpdateChecking(true);
   setUpdateError("");
   try {
@@ -80,5 +82,5 @@ export async function runUpdateCheck(silent = false): Promise<void> {
 /** On launch: cache the version, and (if opted in) run one silent update check. */
 export function initSettings(): void {
   void loadAppVersion();
-  if (checkOnStartup()) void runUpdateCheck(true);
+  if (isTauri() && checkOnStartup()) void runUpdateCheck(true);
 }
