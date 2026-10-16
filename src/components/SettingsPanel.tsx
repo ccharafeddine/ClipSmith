@@ -11,6 +11,8 @@ import {
   updateInfo,
 } from "../settings";
 import { openExternal } from "../ipc";
+import DownloadsSettings from "./DownloadsSettings";
+import "../fetch.css";
 
 // Settings panel: a modal over the editor. Shows the app version and an in-app
 // update check against GitHub Releases (prompt-only — the Download button opens
@@ -112,6 +114,7 @@ export default function SettingsPanel() {
             <span>Check for updates on startup</span>
           </label>
         </div>
+        <DownloadsSettings />
         </Show>
       </div>
     </div>
