@@ -43,7 +43,7 @@ tract-onnx = "0.23"
 regex = "1"
 # Shared URL download engine (yt-dlp, scraper, sniff mode, cookies), from the
 # MediaSmith repo so all Smith apps share one implementation.
-smith-fetch = { git = "https://github.com/ccharafeddine/media-smith", rev = "7b543f17548defa2ca0280d1fd979bc413d2b769", features = ["tauri"] }
+smith-fetch = { git = "https://github.com/ccharafeddine/media-smith", rev = "e63ba081dcdece723acc74dcaad842de9d0bba38", features = ["tauri"] }
 
 [dev-dependencies]
 # Runtime for the #[ignore]d live download harness in commands.rs tests.
