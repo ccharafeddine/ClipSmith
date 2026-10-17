@@ -1,6 +1,6 @@
 [package]
 name = "clipsmith"
-version = "2.2.3"
+version = "2.2.4"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -43,7 +43,7 @@ tract-onnx = "0.23"
 regex = "1"
 # Shared URL download engine (yt-dlp, scraper, sniff mode, cookies), from the
 # MediaSmith repo so all Smith apps share one implementation.
-smith-fetch = { git = "https://github.com/ccharafeddine/media-smith", rev = "adfaf73d4dc608c2c4ad394c7b29ce0e4abae5c9", features = ["tauri"] }
+smith-fetch = { git = "https://github.com/ccharafeddine/media-smith", rev = "5eaf554070fb6a5c4384c45007a0c6ec55cdf8ff", features = ["tauri"] }
 
 [dev-dependencies]
 # Runtime for the #[ignore]d live download harness in commands.rs tests.
