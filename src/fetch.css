@@ -10,3 +10,10 @@
 .smith-fetch-legal { font-size: 0.75em; opacity: 0.6; margin: 4px 0 0; }
 .smith-sites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .smith-toast { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid currentColor; border-radius: 6px; font-size: 0.85em; }
+
+/* Keep Settings inside its panel: a long browser name in the cookies list must
+   not widen the select (and the whole popover) past the panel edge. */
+.smith-dl-settings { min-width: 0; }
+.smith-fetch-field > span { flex: 0 1 auto; min-width: 0; }
+.smith-fetch-field select { flex: 0 1 auto; min-width: 0; max-width: 60%; width: auto; text-overflow: ellipsis; }
+.settings-update-row .smith-fetch-hint { min-width: 0; overflow-wrap: anywhere; }

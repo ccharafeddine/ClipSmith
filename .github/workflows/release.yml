@@ -55,7 +55,7 @@ jobs:
       - name: Build FFmpeg sidecars (macOS, GPL + static libx264 from source)
         if: runner.os == 'macOS'
         run: |
-          brew install nasm
+          brew install nasm autoconf automake libtool pkg-config
           bash scripts/build-ffmpeg-macos.sh
 
       # yt-dlp sidecar (URL import) is in externalBin too, so the bundle step
