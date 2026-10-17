@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-keyframes"
+description = "Enables the list_keyframes command without any pre-configured scope."
+commands.allow = ["list_keyframes"]
+
+[[permission]]
+identifier = "deny-list-keyframes"
+description = "Denies the list_keyframes command without any pre-configured scope."
+commands.deny = ["list_keyframes"]
